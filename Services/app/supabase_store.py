@@ -25,18 +25,31 @@ class SupabaseFileStore:
     def enabled(self) -> bool:
         return bool(self.config and self.config.url and self.config.key)
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, access_token: str | None = None) -> dict[str, str]:
         assert self.config is not None
-
-        # Resilient Header Injection: Check if key is present and not empty
-        if not self.config.key or not str(self.config.key).strip():
-            print("CRITICAL WARNING: Supabase API key is missing or empty in _headers!")
-
+        token = access_token or self.config.key
         return {
             "apikey": self.config.key,
-            "Authorization": f"Bearer {self.config.key}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
+
+    def login(self, email: str, password: str) -> dict[str, Any]:
+        endpoint = f"{self.config.url.rstrip('/')}/auth/v1/token?grant_type=password"
+        resp = requests.post(endpoint, headers=self._headers(), json={"email": email, "password": password})
+        resp.raise_for_status()
+        return resp.json()
+
+    def signup(self, email: str, password: str) -> dict[str, Any]:
+        endpoint = f"{self.config.url.rstrip('/')}/auth/v1/signup"
+        resp = requests.post(endpoint, headers=self._headers(), json={"email": email, "password": password})
+        resp.raise_for_status()
+        return resp.json()
+
+    def logout(self, access_token: str) -> None:
+        endpoint = f"{self.config.url.rstrip('/')}/auth/v1/logout"
+        resp = requests.post(endpoint, headers=self._headers(access_token))
+        resp.raise_for_status()
 
     def _endpoint(self) -> str:
         assert self.config is not None

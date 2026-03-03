@@ -271,3 +271,12 @@ class DataStorage:
     def save_analysis_data(self, filename: str, data: pd.DataFrame) -> None:
         safe = filename if filename.endswith(".csv") else f"{filename}.csv"
         self._save(f"{PATHS['data_analysis_dir']}/{safe}", data, f"Update analysis data {safe}")
+
+    def login(self, email: str, password: str) -> dict[str, Any]:
+        return self.supabase.login(email, password)
+
+    def signup(self, email: str, password: str) -> dict[str, Any]:
+        return self.supabase.signup(email, password)
+
+    def logout(self, access_token: str) -> None:
+        self.supabase.logout(access_token)
