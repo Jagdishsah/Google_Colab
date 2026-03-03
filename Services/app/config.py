@@ -41,7 +41,7 @@ def load_supabase_config() -> SupabaseConfig | None:
         return SupabaseConfig(
             url=str(cfg["url"]),
             key=str(key),
-            table=str(cfg.get("table", "app_files")),
+            table=str(cfg.get('table') or 'app_files'),
         )
     except Exception:
         return None

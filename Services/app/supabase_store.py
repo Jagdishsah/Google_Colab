@@ -40,7 +40,9 @@ class SupabaseFileStore:
 
     def _endpoint(self) -> str:
         assert self.config is not None
-        return f"{self.config.url.rstrip('/')}/rest/v1/{self.config.table}"
+        url = f"{self.config.url.rstrip('/')}/rest/v1/{self.config.table}"
+        print(f"DEBUG: Supabase Endpoint -> {url}")
+        return url
 
     def _with_retry(self, fn):
         err: Exception | None = None
