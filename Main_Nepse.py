@@ -18,6 +18,12 @@ if config is None:
     st.error('❌ Missing Supabase credentials in secrets.toml. Please configure SUPABASE_URL and SUPABASE_KEY.')
     st.stop()
 
+# --- FAIL-FAST CONFIGURATION CHECK ---
+config = load_supabase_config()
+if config is None:
+    st.error('❌ Missing Supabase credentials in secrets.toml. Please configure SUPABASE_URL and SUPABASE_KEY.')
+    st.stop()
+
 storage = DataStorage(supabase_config=config, local_root=Path("."), storage_config=load_storage_config())
 
 # --- 2. AUTHENTICATION WALL ---
