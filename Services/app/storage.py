@@ -97,3 +97,12 @@ class DataStorage:
     def active_backend(self) -> str: return "supabase" if self._use_supabase() else self.storage_config.backend
     def login(self, e, p): return self.supabase.login(e, p)
     def logout(self, t): self.supabase.logout(t)
+
+    def get_terminal_data(self, category: str) -> pd.DataFrame:
+        if category not in TERMINAL_SCHEMAS:
+            return pd.DataFrame()
+        return self._read(category, TERMINAL_SCHEMAS[category])
+
+    def save_terminal_data(self, category: str, data: pd.DataFrame) -> None:
+        if category in TERMINAL_SCHEMAS:
+            self._save(category, data, f"Update Terminal {category}")
