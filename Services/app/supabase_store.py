@@ -13,7 +13,7 @@ import requests
 class SupabaseConfig:
     url: str
     key: str
-    table: str = "app_files"
+    table: str = "app_Files"
 
 
 class SupabaseFileStore:
