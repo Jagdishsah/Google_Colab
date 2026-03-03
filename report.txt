@@ -1,0 +1,48 @@
+Repository Integration Verification Report
+
+1) Storage path registry keys discovered:
+[
+  "ledger",
+  "holdings",
+  "tms_trx",
+  "portfolio",
+  "watchlist",
+  "history",
+  "diary",
+  "wealth",
+  "data_metrics",
+  "activity_log",
+  "cache",
+  "price_log",
+  "error_log",
+  "stock_data_dir",
+  "data_analysis_dir"
+]
+
+2) Reference counts of registry keys across python modules:
+{
+  "ledger": 1,
+  "holdings": 1,
+  "tms_trx": 3,
+  "portfolio": 2,
+  "watchlist": 2,
+  "history": 2,
+  "diary": 2,
+  "wealth": 2,
+  "data_metrics": 1,
+  "activity_log": 3,
+  "cache": 2,
+  "price_log": 2,
+  "error_log": 1,
+  "stock_data_dir": 1,
+  "data_analysis_dir": 1
+}
+
+3) Validation checks run:
+- pytest -q (unit tests)
+- python -m compileall TMS_Ledger.py Services Tabs Data
+- rg scan for stale pre-migration paths/imports
+
+4) Conclusion:
+- Centralized path map in Services/app/storage.py is actively referenced across UI, terminal, market predictor, and service modules.
+- Shared DataStorage APIs are used by tab modules routed from TMS_Ledger.py, enabling cross-tab data propagation (same underlying CSV/logical keys).

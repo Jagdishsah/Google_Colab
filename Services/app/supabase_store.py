@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from io import StringIO
+from typing import Any
+
+import pandas as pd
+import requests
+
+
+@dataclass
+class SupabaseConfig:
+    url: str
+    key: str
+    table: str = "app_files"
+
+
+class SupabaseFileStore:
+    def __init__(self, config: SupabaseConfig | None, retry_count: int = 3, retry_backoff_s: float = 0.4):
+        self.config = config
+        self.retry_count = max(1, retry_count)
+        self.retry_backoff_s = max(0.0, retry_backoff_s)
+
+    def enabled(self) -> bool:
+        return bool(self.config and self.config.url and self.config.key)
+
+    def _headers(self) -> dict[str, str]:
+        assert self.config is not None
+        print(f"DEBUG: Using API Key starting with: {self.config.key[:4]}****")
+        return {
+            "apikey": self.config.key,
+            "Authorization": f"Bearer {self.config.key}",
+            "Content-Type": "application/json",
+        }
+
+    def _endpoint(self) -> str:
+        assert self.config is not None
+        return f"{self.config.url.rstrip('/')}/rest/v1/{self.config.table}"
+
+    def _with_retry(self, fn):
+        err: Exception | None = None
+        for i in range(self.retry_count):
+            try:
+                return fn()
+            except Exception as ex:  # network/transient/server
+                err = ex
+                if i < self.retry_count - 1:
+                    time.sleep(self.retry_backoff_s * (2**i))
+        if err:
+            raise err
+        return None
+
+    def read_text(self, path: str) -> str | None:
+        if not self.enabled():
+            return None
+
+        def _op():
+            resp = requests.get(
+                self._endpoint(),
+                headers=self._headers(),
+                params={"select": "content", "path": f"eq.{path}", "limit": 1},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            rows: list[dict[str, Any]] = resp.json() or []
+            return rows[0].get("content") if rows else None
+
+        try:
+            return self._with_retry(_op)
+        except Exception:
+            return None
+
+    def write_text(self, path: str, content: str) -> None:
+        if not self.enabled():
+            raise RuntimeError("Supabase is not configured")
+
+        def _op():
+            payload = [{"path": path, "content": content}]
+            requests.post(
+                self._endpoint(),
+                headers={**self._headers(), "Prefer": "resolution=merge-duplicates"},
+                params={"on_conflict": "path"},
+                json=payload,
+                timeout=20,
+            ).raise_for_status()
+
+        self._with_retry(_op)
+
+    def list_paths(self, prefix: str) -> list[str]:
+        if not self.enabled():
+            return []
+
+        def _op():
+            resp = requests.get(
+                self._endpoint(),
+                headers=self._headers(),
+                params={"select": "path", "path": f"like.{prefix}%"},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            rows: list[dict[str, str]] = resp.json() or []
+            return sorted([r.get("path", "") for r in rows if r.get("path", "").endswith(".csv")])
+
+        try:
+            return self._with_retry(_op)
+        except Exception:
+            return []
+
+    def read_csv(self, path: str, columns: list[str]) -> pd.DataFrame:
+        text = self.read_text(path)
+        if not text:
+            return pd.DataFrame(columns=columns)
+        return pd.read_csv(StringIO(text))
+
+    def write_csv(self, path: str, data: pd.DataFrame) -> None:
+        self.write_text(path, data.to_csv(index=False))

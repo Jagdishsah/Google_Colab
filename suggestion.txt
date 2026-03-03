@@ -1,0 +1,30 @@
+Improvement Suggestions (Professional Roadmap)
+
+1. Data Layer Hardening
+- Promote SQLite backend to default for concurrent Streamlit sessions; keep CSV import/export for portability.
+- Add migration scripts and schema version table.
+- Introduce row-level audit metadata (created_by, updated_at, source_tab).
+
+2. Service Layer Expansion
+- Add Services/app/services/orders.py and reconciliation.py.
+- Add deterministic transaction IDs and idempotency checks.
+- Add broker/medium normalization dictionaries to avoid symbol drift.
+
+3. Reliability & Ops
+- Add CI pipeline: ruff + mypy + pytest + smoke import check.
+- Add rotating JSON logs (python logging handlers) and alert hooks.
+- Add scheduled cache refresh job (GitHub Action or cron).
+
+4. Research Hub Quality
+- Convert Data/Market_Data/Data_analysis scripts into Services package modules with direct imports (no exec patterns).
+- Add reusable chart component library to eliminate duplicated selectbox/widget IDs.
+- Add factor-scanner tab: momentum, breakout, mean-reversion, delivery-volume filters.
+
+5. Risk & Portfolio
+- Add max-risk-per-trade and portfolio heatmap by sector/symbol.
+- Add drawdown monitor, VaR/CVaR estimation, and stress scenarios.
+- Add cashflow projection and collateral utilization dashboard.
+
+6. Testing
+- Expand tests for storage backends (local/github/sqlite), predictor signals, and end-to-end transaction sync.
+- Add golden-data fixtures and snapshot tests for key analytics outputs.

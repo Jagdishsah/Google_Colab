@@ -1,0 +1,20 @@
+Project Working (Detailed)
+
+Architecture
+- Entry router: TMS_Ledger.py dynamically routes to Tabs/*/render(storage).
+- Data abstraction: Services/app/storage.py maps logical keys to strict Data/... paths.
+- Business/UI modules read and write through DataStorage, keeping all tabs synchronized.
+
+How data stays connected
+1) Transaction Center writes ledger + holdings + tms_trx + activity_log via shared storage instance.
+2) Dashboard and Analytics read ledger/holdings from same storage keys, so updates appear immediately.
+3) Terminal Hub uses portfolio/watchlist/cache/history/wealth keys from same storage registry.
+4) Research Hub and Market Predictor consume Data/Market_Data datasets through centralized paths.
+
+Verification performed
+- Unit tests passed (signals + transaction sync).
+- Compile check passed for all modules and tabs.
+- Path scan performed to find stale references after restructure; critical stale market-data paths were corrected.
+
+Known technical debt
+- Some research scripts remain script-style under Data/Market_Data; they should be promoted into Services modules for stronger import safety and testability.

@@ -1,0 +1,222 @@
+FINAL REPORT EVERYTHING — MASTER BLUEPRINT
+Generated from repository state for production readiness handoff.
+
+1) SYSTEM ARCHITECTURE & COMPLETE DIRECTORY TREE
+Root: /workspace/Copy-Paste
+```
+.
+├── Data
+│   ├── Logs
+│   │   ├── __init__.py
+│   │   ├── activity_log.csv
+│   │   ├── cache.csv
+│   │   ├── error_log.csv
+│   │   └── price_log.csv
+│   ├── Market_Data
+│   │   ├── Data_analysis
+│   │   │   ├── __init__.py
+│   │   │   ├── Advanced_analysis.py
+│   │   │   ├── API_44.csv
+│   │   │   ├── ULHC_58.csv
+│   │   │   └── Visual.py
+│   │   ├── Stock_Data
+│   │   │   ├── __init__.py
+│   │   │   ├── API.csv
+│   │   │   └── ULHC.csv
+│   │   └── __init__.py
+│   ├── TMS_Data
+│   │   ├── __init__.py
+│   │   ├── tms_holdings.csv
+│   │   ├── tms_ledger_master.csv
+│   │   └── tms_trx.csv
+│   ├── User_Data
+│   │   ├── __init__.py
+│   │   ├── Data.csv
+│   │   ├── diary.csv
+│   │   ├── history.csv
+│   │   ├── portfolio.csv
+│   │   ├── watchlist.csv
+│   │   └── wealth.csv
+│   └── __init__.py
+├── data
+├── Services
+│   ├── app
+│   │   ├── services
+│   │   │   ├── __init__.py
+│   │   │   ├── portfolio.py
+│   │   │   ├── risk.py
+│   │   │   └── signals.py
+│   │   ├── __init__.py
+│   │   ├── config.py
+│   │   ├── logger.py
+│   │   ├── logic.py
+│   │   ├── market_predictor.py
+│   │   ├── storage.py
+│   │   ├── terminal_ui.py
+│   │   ├── transactions.py
+│   │   └── ui.py
+│   ├── Stock_Graph
+│   │   ├── __init__.py
+│   │   ├── Elliot_Wave.py
+│   │   └── Graph.py
+│   ├── __init__.py
+│   ├── Advisor.py
+│   ├── Data.py
+│   └── scrape.py
+├── Tabs
+│   ├── 1_Dashboard
+│   │   ├── __init__.py
+│   │   └── portfolio_view.py
+│   ├── 2_Transaction_Center
+│   │   ├── __init__.py
+│   │   └── transaction_view.py
+│   ├── 3_Ledger_History
+│   │   ├── __init__.py
+│   │   └── history_view.py
+│   ├── 4_Analytics
+│   │   ├── __init__.py
+│   │   └── analytics_view.py
+│   ├── 5_Terminal_Hub
+│   │   ├── __init__.py
+│   │   └── terminal_view.py
+│   ├── 6_Research_Hub
+│   │   ├── __init__.py
+│   │   └── research_view.py
+│   ├── 7_Manage_Data
+│   │   ├── __init__.py
+│   │   └── manage_view.py
+│   ├── 8_Market_Predictor
+│   │   ├── __init__.py
+│   │   └── market_predictor_view.py
+│   └── __init__.py
+├── tests
+│   ├── conftest.py
+│   ├── test_signals.py
+│   └── test_transactions.py
+├── README.md
+├── report.txt
+├── requirements.txt
+├── suggestion.txt
+├── TMS_Ledger.py
+└── working.txt
+```
+
+2) ROUTING ENGINE (TMS_Ledger.py)
+- The app intentionally bypasses Streamlit's native `pages/` auto-router.
+- `TMS_Ledger.py` declares a `TAB_ROUTES` dictionary mapping 8 sidebar labels to concrete Python files in `Tabs/*`.
+- A custom `run_tab(path, storage)` loader uses `importlib.util.spec_from_file_location(...)` + `exec_module(...)`.
+- Contract: every tab module must expose `render(storage)`; otherwise the router raises an in-app error.
+- A single `DataStorage` instance is initialized once in `TMS_Ledger.py` and passed to every tab, so all tabs share one consistent data layer.
+- Sidebar uses `st.radio` to select one of the 8 tabs and dispatches through `run_tab(...)`.
+- Authentication gate is handled by `check_login()` before routing.
+
+
+3) STORAGE PATH MAP VALIDATION (Services/app/storage.py)
+Logical key -> physical path mappings:
+- ledger -> Data/TMS_Data/tms_ledger_master.csv
+- holdings -> Data/TMS_Data/tms_holdings.csv
+- tms_trx -> Data/TMS_Data/tms_trx.csv
+- portfolio -> Data/User_Data/portfolio.csv
+- watchlist -> Data/User_Data/watchlist.csv
+- history -> Data/User_Data/history.csv
+- diary -> Data/User_Data/diary.csv
+- wealth -> Data/User_Data/wealth.csv
+- data_metrics -> Data/User_Data/Data.csv
+- activity_log -> Data/Logs/activity_log.csv
+- cache -> Data/Logs/cache.csv
+- price_log -> Data/Logs/price_log.csv
+- error_log -> Data/Logs/error_log.csv
+- stock_data_dir -> Data/Market_Data/Stock_Data
+- data_analysis_dir -> Data/Market_Data/Data_analysis
+
+Audit result: all mapped files/directories exist in repository state.
+
+
+4) DATA SCHEMA MATRIX (ALL CSV FILES UNDER Data/)
+- Data/Logs/activity_log.csv
+  Columns: Timestamp, Category, Symbol, Action, Details, Amount
+- Data/Logs/cache.csv
+  Columns: Symbol, LTP, Change, High52, Low52, LastUpdated
+- Data/Logs/error_log.csv
+  Columns: Date, Time, Context, Error_Message, Traceback
+- Data/Logs/price_log.csv
+  Columns: Date, Symbol, LTP
+- Data/Market_Data/Data_analysis/API_44.csv
+  Columns: date, Buy_Qty, Sell_Qty, Buy_Amount, Sell_Amount, Date, Net_Qty, Net_Amount, Cum_Net_Qty, Cum_Net_Amount
+- Data/Market_Data/Data_analysis/ULHC_58.csv
+  Columns: Date, Buy_Qty, Sell_Qty, Net_Qty, Buy_Amount, Sell_Amount, Net_Amount
+- Data/Market_Data/Stock_Data/API.csv
+  Columns: Date, Open, High, Low, Close, Volume
+- Data/Market_Data/Stock_Data/ULHC.csv
+  Columns: Date, Open, High, Low, Close, Volume
+- Data/TMS_Data/tms_holdings.csv
+  Columns: Symbol, Total_Qty, Pledged_Qty, LTP, Haircut
+- Data/TMS_Data/tms_ledger_master.csv
+  Columns: Date, Type, Category, Amount, Status, Due_Date, Ref_ID, Description, Is_Non_Cash, Dispute_Note, Fiscal_Year
+- Data/TMS_Data/tms_trx.csv
+  Columns: Date, Stock, Type, Medium, Amount, Charge, Remark, Reference
+- Data/User_Data/Data.csv
+  Columns: Date, Realized_PL, Realized_PL_Pct, Unrealized_PL, Unrealized_PL_Pct
+- Data/User_Data/diary.csv
+  Columns: Date, Symbol, Note, Emotion, Mistake, Strategy
+- Data/User_Data/history.csv
+  Columns: Date, Buy_Date, Symbol, Units, Buy_Price, Sell_Price, Invested_Amount, Received_Amount, Net_PL, PL_Pct, Reason
+- Data/User_Data/portfolio.csv
+  Columns: Symbol, Sector, Units, Total_Cost, WACC, Buy_Date, Stop_Loss, Notes
+- Data/User_Data/watchlist.csv
+  Columns: Symbol, Target, Remark
+- Data/User_Data/wealth.csv
+  Columns: Date, Total_Investment, Current_Value, Total_PL, Day_Change, Sold_Volume
+
+5) MARKET PREDICTOR LOGIC SUMMARY (Services/app/market_predictor.py)
+A) VPVR + POC
+- Close prices are binned into 20 horizontal bins.
+- Volume is summed per price bin to build a volume profile.
+- Point of Control (POC) is the price bin with maximum summed volume.
+- Signals:
+  - BUY: current close within ±2% of POC and current close > previous close.
+  - SELL: current close is more than 3% below POC.
+
+B) Smart Money Concepts: Fair Value Gaps (FVG)
+- Bullish FVG if Low(candle3) > High(candle1).
+- Bearish FVG if High(candle3) < Low(candle1).
+- Rectangles are rendered on chart for detected zones.
+- Signals:
+  - BUY: current candle closes green while price enters a bullish FVG.
+  - SELL/DUMP: current candle closes red while price enters a bearish FVG.
+
+C) Wyckoff Accumulation Scanner
+- Computes 20-day rolling std dev of Close (volatility).
+- Computes 20-day and 200-day SMA of Close.
+- STRONG BUY (Accumulation) when:
+  - 20-day volatility is in bottom 10th percentile of historical volatility, and
+  - price is within 5% of 200-day SMA.
+- Alert text: "Wyckoff Spring Alert: Accumulation detected. Watch for breakout."
+
+
+6) DEPLOYMENT INSTRUCTIONS
+Prerequisites
+- Python 3.10+ recommended.
+- Streamlit secrets should provide app auth/GitHub/Gemini config as needed.
+
+Install
+1) python -m venv .venv
+2) source .venv/bin/activate   (Windows: .venv\Scripts\activate)
+3) pip install --upgrade pip
+4) pip install -r requirements.txt
+
+Run
+- streamlit run TMS_Ledger.py --server.address 0.0.0.0 --server.port 8501
+
+Optional quality checks before deploy
+- pytest -q
+- python -m compileall TMS_Ledger.py Services Tabs Data
+
+
+7) FINAL AUDIT RESULTS (PRODUCTION READINESS CHECK)
+- Import Integrity: PASS (core modules + tab modules import/load successfully).
+- Circular Import Scan (Services package): PASS (no cycle detected in static dependency graph).
+- Router Safety: PASS (all 8 tab files exist and expose render(storage)).
+- Storage Path Integrity: PASS (all PATHS entries map to existing files/directories).
+- Syntax/Build: PASS via compileall.
+- Unit Tests: PASS via pytest (existing tests).

@@ -1,0 +1,6 @@
+.config/
+sample_data/
+Code_Master.txt
+.pytest_cache/
+__pycache__/
+*.zip
