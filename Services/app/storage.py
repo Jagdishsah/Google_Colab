@@ -97,6 +97,35 @@ class DataStorage:
     def active_backend(self) -> str: return "supabase" if self._use_supabase() else self.storage_config.backend
     def login(self, e, p): return self.supabase.login(e, p)
     def logout(self, t): self.supabase.logout(t)
+    def get_storage_health(self) -> dict: 
+        return self.last_write_status
+
+    def list_stock_data_files(self) -> list[str]:
+        rel_dir = PATHS["stock_data_dir"]
+        if self._use_supabase():
+            return self.supabase.list_paths(rel_dir + "/", table="public_Files")
+        path = self.local_root / rel_dir
+        return [f.name for f in path.glob("*.csv")] if path.exists() else []
+
+    def get_stock_data(self, symbol: str) -> pd.DataFrame:
+        rel_path = f"{PATHS['stock_data_dir']}/{symbol}.csv"
+        return self._read(rel_path, [])
+
+    def list_analysis_files(self) -> list[str]:
+        rel_dir = PATHS["data_analysis_dir"]
+        if self._use_supabase():
+            return self.supabase.list_paths(rel_dir + "/", table="public_Files")
+        path = self.local_root / rel_dir
+        return [f.name for f in path.glob("*.csv")] if path.exists() else []
+
+    def get_analysis_data(self, filename: str) -> pd.DataFrame:
+        rel_path = f"{PATHS['data_analysis_dir']}/{filename}"
+        return self._read(rel_path, [])
+
+    def save_analysis_data(self, filename: str, data: pd.DataFrame) -> None:
+        rel_path = f"{PATHS['data_analysis_dir']}/{filename}"
+        self._save(rel_path, data, f"Update Analysis {filename}")
+
 
     def get_terminal_data(self, category: str) -> pd.DataFrame:
         if category not in TERMINAL_SCHEMAS:
