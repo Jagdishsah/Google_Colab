@@ -1,4 +1,5 @@
 from __future__ import annotations
+import streamlit as st
 
 import hashlib
 import sqlite3
@@ -59,6 +60,13 @@ TERMINAL_SCHEMAS = {
 
 
 class DataStorage:
+    def _get_target_table(self, rel_path: str) -> str:
+        # Route based on directory structure
+        # app_Files: User_Data, TMS_Data, Logs
+        # public_Files: Market_Data
+        if "Market_Data" in rel_path:
+            return "public_Files"
+        return "app_Files"
     def __init__(self, supabase_config: SupabaseConfig | None, local_root: Path, storage_config: StorageConfig | None = None):
         self.local_root = local_root
         self.storage_config = storage_config or StorageConfig()
@@ -106,7 +114,7 @@ class DataStorage:
             return self._read_sqlite(logical_key, columns)
 
         if self._use_supabase():
-            df = self.supabase.read_csv(rel_path, columns)
+            df = self.supabase.read_csv(rel_path, columns, table=self._get_target_table(rel_path), user_id=st.session_state.get('user_id'), access_token=st.session_state.get('access_token'))
             if not df.empty:
                 return df
 
@@ -136,7 +144,7 @@ class DataStorage:
 
         if self._use_supabase():
             try:
-                self.supabase.write_csv(rel_path, data)
+                self.supabase.write_csv(rel_path, data, table=self._get_target_table(rel_path), user_id=st.session_state.get('user_id'), access_token=st.session_state.get('access_token'))
             except Exception as ex:
                 remote_ok = False
                 err = f"Supabase write failed: {ex}"
@@ -237,7 +245,7 @@ class DataStorage:
     def list_stock_data_files(self) -> list[str]:
         rel_dir = PATHS["stock_data_dir"]
         if self._use_supabase():
-            files = self.supabase.list_paths(rel_dir + "/")
+            files = self.supabase.list_paths(rel_dir + "/", table=self._get_target_table(rel_dir), user_id=st.session_state.get('user_id'), access_token=st.session_state.get('access_token'))
             if files:
                 return sorted([Path(p).name for p in files])
         local_dir = self.local_root / rel_dir
@@ -256,7 +264,7 @@ class DataStorage:
     def list_analysis_files(self) -> list[str]:
         rel_dir = PATHS["data_analysis_dir"]
         if self._use_supabase():
-            files = self.supabase.list_paths(rel_dir + "/")
+            files = self.supabase.list_paths(rel_dir + "/", table=self._get_target_table(rel_dir), user_id=st.session_state.get('user_id'), access_token=st.session_state.get('access_token'))
             if files:
                 return sorted([Path(p).name for p in files])
         local_dir = self.local_root / rel_dir

@@ -36,13 +36,13 @@ class SupabaseFileStore:
 
     def login(self, email: str, password: str) -> dict[str, Any]:
         endpoint = f"{self.config.url.rstrip('/')}/auth/v1/token?grant_type=password"
-        resp = requests.post(endpoint, headers=self._headers(), json={"email": email, "password": password})
+        resp = requests.post(endpoint, headers=self._headers(access_token), json={"email": email, "password": password})
         resp.raise_for_status()
         return resp.json()
 
     def signup(self, email: str, password: str) -> dict[str, Any]:
         endpoint = f"{self.config.url.rstrip('/')}/auth/v1/signup"
-        resp = requests.post(endpoint, headers=self._headers(), json={"email": email, "password": password})
+        resp = requests.post(endpoint, headers=self._headers(access_token), json={"email": email, "password": password})
         resp.raise_for_status()
         return resp.json()
 
@@ -51,7 +51,7 @@ class SupabaseFileStore:
         resp = requests.post(endpoint, headers=self._headers(access_token))
         resp.raise_for_status()
 
-    def _endpoint(self) -> str:
+    def _endpoint(self, table_override: str | None = None) -> str:
         assert self.config is not None
         url = f"{self.config.url.rstrip('/')}/rest/v1/{self.config.table}"
         print(f"DEBUG: Supabase Endpoint -> {url}")
@@ -70,15 +70,15 @@ class SupabaseFileStore:
             raise err
         return None
 
-    def read_text(self, path: str) -> str | None:
+    def read_text(self, path: str, table: str | None = None, user_id: str | None = None, access_token: str | None = None) -> str | None:
         if not self.enabled():
             return None
 
         def _op():
             resp = requests.get(
-                self._endpoint(),
-                headers=self._headers(),
-                params={"select": "content", "path": f"eq.{path}", "limit": 1},
+                self._endpoint(table),
+                headers=self._headers(access_token),
+                params={"select": "content", "path": f"eq.{path}", "limit": 1, "user_id": f"eq.{user_id}" if user_id else None},
                 timeout=20,
             )
             resp.raise_for_status()
@@ -90,14 +90,14 @@ class SupabaseFileStore:
         except Exception:
             return None
 
-    def write_text(self, path: str, content: str) -> None:
+    def write_text(self, path: str, content: str, table: str | None = None, user_id: str | None = None, access_token: str | None = None) -> None:
         if not self.enabled():
             raise RuntimeError("Supabase is not configured")
 
         def _op():
-            payload = [{"path": path, "content": content}]
+            payload = [{"path": path, "content": content, "user_id": user_id}] if user_id else [{"path": path, "content": content}]
             requests.post(
-                self._endpoint(),
+                self._endpoint(table),
                 headers={**self._headers(), "Prefer": "resolution=merge-duplicates"},
                 params={"on_conflict": "path"},
                 json=payload,
@@ -106,15 +106,15 @@ class SupabaseFileStore:
 
         self._with_retry(_op)
 
-    def list_paths(self, prefix: str) -> list[str]:
+    def list_paths(self, prefix: str, table: str | None = None, user_id: str | None = None, access_token: str | None = None) -> list[str]:
         if not self.enabled():
             return []
 
         def _op():
             resp = requests.get(
-                self._endpoint(),
-                headers=self._headers(),
-                params={"select": "path", "path": f"like.{prefix}%"},
+                self._endpoint(table),
+                headers=self._headers(access_token),
+                params={"select": "path", "path": f"like.{prefix}%", "user_id": f"eq.{user_id}" if user_id else None},
                 timeout=20,
             )
             resp.raise_for_status()
