@@ -42,7 +42,7 @@ Data/
 ```
 
 ## Routing model
-- `TMS_Ledger.py` now acts as a **custom router**.
+- `Main_Nepse.py` now acts as a **custom router**.
 - It loads tab modules from `Tabs/**` using `importlib.util.spec_from_file_location` and calls `render(storage)`.
 - The Streamlit `pages/` dependency is removed.
 
@@ -53,7 +53,7 @@ This enforces strict relative-path consistency across Services/Tabs.
 ## Run
 ```bash
 pip install -r requirements.txt
-streamlit run TMS_Ledger.py
+streamlit run Main_Nepse.py
 ```
 
 ## Optional storage backend

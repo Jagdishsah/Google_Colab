@@ -1,9 +1,0 @@
-streamlit
-pandas
-requests
-beautifulsoup4
-plotly
-google-generativeai
-supabase
-pydantic
-httpx
