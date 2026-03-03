@@ -1,0 +1,3164 @@
+PROJECT TREE
+============
+content/
+    Main_Nepse.py
+    README.md
+    A.py
+    Screenshot (19).png
+    requirements.txt
+    restore.py
+    tests/
+        test_storage_backend.py
+        test_transactions.py
+        conftest.py
+        test_signals.py
+    logs/
+        app_events.jsonl
+    Copy-Paste/
+    data/
+    Tabs/
+        __init__.py
+        3_Ledger_History/
+            history_view.py
+            __init__.py
+        9_Restore/
+            __init__.py
+            restore_view.py
+        4_Analytics/
+            analytics_view.py
+            __init__.py
+        5_Terminal_Hub/
+            __init__.py
+            terminal_view.py
+        8_Market_Predictor/
+            __init__.py
+            market_predictor_view.py
+        7_Manage_Data/
+            manage_view.py
+            __init__.py
+        6_Research_Hub/
+            __init__.py
+            research_view.py
+        2_Transaction_Center/
+            transaction_view.py
+            __init__.py
+        1_Dashboard/
+            __init__.py
+            portfolio_view.py
+    .github/
+        workflows/
+    Data/
+        __init__.py
+        Market_Data/
+            __init__.py
+            Stock_Data/
+                __init__.py
+            Data_analysis/
+                Visual.py
+                __init__.py
+                Advanced_analysis.py
+        TMS_Data/
+            __init__.py
+        User_Data/
+            __init__.py
+        Logs/
+            __init__.py
+    Services/
+        Data.py
+        __init__.py
+        scrape.py
+        Advisor.py
+        app/
+            ui.py
+            storage.py
+            terminal_ui.py
+            market_predictor.py
+            __init__.py
+            logic.py
+            logger.py
+            config.py
+            transactions.py
+            supabase_store.py
+            services/
+                signals.py
+                __init__.py
+                portfolio.py
+                risk.py
+            domain/
+                models.py
+        Stock_Graph/
+            Graph.py
+            __init__.py
+            Elliot_Wave.py
+
+================================================================================
+FILE CONTENTS
+================================================================================
+
+PROGRAM: Main_Nepse.py
+--------------------------------------------------------------------------------
+
+import streamlit as st
+import os
+from pathlib import Path
+from Services.app.config import load_supabase_config
+from Services.app.storage import DataStorage
+
+def run_diagnostics():
+    st.title("🔍 System Diagnostics")
+    
+    st.subheader("1. Secret Keys Audit")
+    # Print keys to check for casing issues (masking values)
+    secrets_dict = {}
+    for key in st.secrets.keys():
+        val = str(st.secrets[key])
+        masked = val[:4] + "****" if len(val) > 4 else "****"
+        secrets_dict[key] = masked
+    st.json(secrets_dict)
+
+    st.subheader("2. Configuration Loading")
+    config = load_supabase_config()
+    if config:
+        st.success(f"Config Loaded: URL={config.url}")
+        st.info(f"Table Name: {config.table}")
+    else:
+        st.error("Failed to load Supabase Config. Check secret names/nesting.")
+
+    st.subheader("3. Connection Test")
+    try:
+        storage = DataStorage(supabase_config=config, local_root=Path("."))
+        st.write(f"Active Backend: {storage.active_backend()}")
+        
+        with st.spinner("Attempting get_ledger()..."):
+            ledger = storage.get_ledger()
+            st.success("Successfully connected and fetched ledger!")
+            st.dataframe(ledger.head())
+    except ModuleNotFoundError as e:
+        st.error(f"Missing Module: {e}")
+    except Exception as e:
+        st.error(f"Connection Error: {type(e).__name__}")
+        st.exception(e)
+
+if __name__ == "__main__":
+    run_diagnostics()
+
+
+================================================================================
+
+PROGRAM: README.md
+--------------------------------------------------------------------------------
+# NEPSE Unified Intelligence Terminal (Enterprise Layout)
+
+This repo has been restructured into a strict enterprise hierarchy.
+
+## Folder architecture
+
+```text
+Services/
+  app/
+    config.py
+    logic.py
+    storage.py
+    transactions.py
+    market_predictor.py
+    terminal_ui.py
+    ui.py
+    logger.py
+    services/
+      signals.py
+      risk.py
+      portfolio.py
+  Data.py
+  Advisor.py
+  scrape.py
+  Stock_Graph/
+
+Tabs/
+  1_Dashboard/portfolio_view.py
+  2_Transaction_Center/transaction_view.py
+  3_Ledger_History/history_view.py
+  4_Analytics/analytics_view.py
+  5_Terminal_Hub/terminal_view.py
+  6_Research_Hub/research_view.py
+  7_Manage_Data/manage_view.py
+  8_Market_Predictor/market_predictor_view.py
+
+Data/
+  User_Data/
+  TMS_Data/
+  Logs/
+  Market_Data/
+```
+
+## Routing model
+- `Main_Nepse.py` now acts as a **custom router**.
+- It loads tab modules from `Tabs/**` using `importlib.util.spec_from_file_location` and calls `render(storage)`.
+- The Streamlit `pages/` dependency is removed.
+
+## Data paths
+All core data paths are centralized in `Services/app/storage.py` under `PATHS`.
+This enforces strict relative-path consistency across Services/Tabs.
+
+## Run
+```bash
+pip install -r requirements.txt
+streamlit run Main_Nepse.py
+```
+
+## Optional storage backend
+```toml
+[storage]
+backend = "sqlite"          # csv | sqlite
+sqlite_path = "data/terminal.db"
+```
+
+## Suggested next-level upgrade
+For even stronger enterprise quality, introduce a domain-layer package (`domain/`) with Pydantic schemas for each row type (ledger, tms_trx, cache, history) and force schema validation before every write.
+
+================================================================================
+
+PROGRAM: A.py
+--------------------------------------------------------------------------------
+import importlib.util
+from pathlib import Path
+
+import streamlit as st
+from datetime import datetime
+
+# MUST BE THE FIRST STREAMLIT COMMAND!
+st.set_page_config(page_title="NEPSE TMS Pro Ledger", page_icon="💹", layout="wide", initial_sidebar_state="expanded")
+
+from Services.app.config import load_storage_config, load_supabase_config
+from Services.app.storage import DataStorage
+from Services.app.ui import inject_css, render_sidebar_holdings
+from supabase import create_client, Client
+
+
+#Caching
+# Initialize Storage
+storage = DataStorage(supabase_config=load_supabase_config(), local_root=Path("."), storage_config=load_storage_config())
+
+if "user" in st.session_state:
+    if "ledger_df" not in st.session_state:
+        with st.spinner("Syncing with Cloud..."):
+            st.session_state.ledger_df = storage.get_ledger()
+            st.session_state.holdings_df = storage.get_holdings()
+            st.session_state.last_sync = datetime.now()
+# Now, instead of calling storage.get_ledger() in your tabs, 
+    # you just use st.session_state.ledger_df. This is INSTANT (0ms).
+
+
+# --- 1. SUPABASE INITIALIZATION ---
+config = load_supabase_config()
+url = config.url if config else st.secrets.get("SUPABASE_URL")
+key = config.key if config else st.secrets.get("SUPABASE_KEY")
+supabase: Client = create_client(url, key)
+
+# --- 2. AUTHENTICATION WALL ---
+if "user" not in st.session_state:
+    st.markdown("<h1 style='text-align: center;'>🔐 Project Codex</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center;'>Login or create an account to access your secure terminal.</p>", unsafe_allow_html=True)
+    
+    with st.form("auth_form"):
+        email = st.text_input("Email Address")
+        password = st.text_input("Password", type="password")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            login_btn = st.form_submit_button("Log In", use_container_width=True)
+        with c2:
+            signup_btn = st.form_submit_button("Sign Up", use_container_width=True)
+
+    if login_btn:
+        try:
+            res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            st.session_state["user"] = res.user
+            # 👇 ADD THIS LINE to save the user's security token!
+            st.session_state["access_token"] = res.session.access_token 
+            st.rerun()
+        except Exception as e:
+            st.error("Login Failed: Invalid email or password.")
+            
+    if signup_btn:
+        try:
+            res = supabase.auth.sign_up({"email": email, "password": password})
+            st.success("Account created successfully! You can now log in.")
+        except Exception as e:
+            st.error(f"Signup Failed: {e}")
+            
+    st.stop() # 🛑 Stops the rest of the app from loading!
+
+# --- 3. CODEX TERMINAL (User is Logged In) ---
+current_user = st.session_state["user"]
+st.session_state["user_id"] = current_user.id # We will need this for the database!
+
+st.sidebar.success(f"👤 Logged in as: \n{current_user.email}")
+if st.sidebar.button("Log Out", use_container_width=True):
+    supabase.auth.sign_out()
+    st.session_state.clear()
+    st.rerun()
+
+st.sidebar.divider()
+
+TAB_ROUTES = {
+    "🏠 Dashboard": Path("Tabs/1_Dashboard/portfolio_view.py"),
+    "✍️ Transaction Center": Path("Tabs/2_Transaction_Center/transaction_view.py"),
+    "📜 Ledger History": Path("Tabs/3_Ledger_History/history_view.py"),
+    "📊 Analytics": Path("Tabs/4_Analytics/analytics_view.py"),
+    "🖥️ Terminal Hub": Path("Tabs/5_Terminal_Hub/terminal_view.py"),
+    "🧠 Research Hub": Path("Tabs/6_Research_Hub/research_view.py"),
+    "🛠️ Manage Data": Path("Tabs/7_Manage_Data/manage_view.py"),
+    "🔮 Market Predictor": Path("Tabs/8_Market_Predictor/market_predictor_view.py"),
+    "♻️ Restore": Path("Tabs/9_Restore/restore_view.py"),
+}
+
+def run_tab(path: Path, storage: DataStorage) -> None:
+    if not path.exists():
+        st.error(f"Missing tab file: {path}")
+        return
+    spec = importlib.util.spec_from_file_location(f"tab_{path.stem}", path)
+    if spec is None or spec.loader is None:
+        st.error(f"Could not load tab: {path}")
+        return
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if hasattr(module, "render"):
+        module.render(storage)
+    else:
+        st.error(f"Tab missing render(storage): {path}")
+
+inject_css()
+
+
+with st.sidebar:
+    st.title("💹 TMS Pro")
+    selected = st.radio("Navigation", list(TAB_ROUTES.keys()))
+    st.caption(f"Storage backend: {storage.active_backend()}")
+    render_sidebar_holdings(storage, storage.get_holdings())
+
+run_tab(TAB_ROUTES[selected], storage)
+
+================================================================================
+
+PROGRAM: requirements.txt
+--------------------------------------------------------------------------------
+streamlit
+pandas
+requests
+beautifulsoup4
+plotly
+google-generativeai
+supabase
+pydantic
+httpx
+pytest
+
+
+================================================================================
+
+PROGRAM: restore.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+from io import StringIO
+
+import pandas as pd
+import requests
+import streamlit as st
+
+from Services.app.config import load_github_config
+from Services.app.storage import DataStorage, PATHS
+
+
+def _github_get_csv(repo: str, token: str, path: str) -> pd.DataFrame | None:
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    resp = requests.get(url, headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.raw+json"}, timeout=30)
+    if resp.status_code >= 300:
+        return None
+    return pd.read_csv(StringIO(resp.text))
+
+
+def _github_list_dir(repo: str, token: str, path: str) -> list[str]:
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    resp = requests.get(url, headers={"Authorization": f"token {token}"}, timeout=30)
+    if resp.status_code >= 300:
+        return []
+    rows = resp.json() or []
+    return [item["name"] for item in rows if item.get("name", "").endswith(".csv")]
+
+
+def _import_one(storage: DataStorage, rel_path: str, repo: str, token: str, failed: list[str]) -> tuple[int, int]:
+    df = _github_get_csv(repo, token, rel_path)
+    if df is None:
+        failed.append(rel_path)
+        return 0, 0
+    try:
+        changed = storage.import_legacy_csv(rel_path, df, skip_if_same=True)
+        return (1, 0) if changed else (0, 1)
+    except Exception:
+        failed.append(rel_path)
+        return 0, 0
+
+
+def render_restore(storage: DataStorage) -> None:
+    st.header("♻️ GitHub to Supabase Restore")
+    st.caption("Idempotent migration tool for legacy GitHub CSV files.")
+
+    gh = load_github_config()
+    if not gh:
+        st.warning("GitHub credentials not configured in Streamlit secrets.")
+        return
+
+    if st.button("Restore all GitHub CSV data into Supabase", type="primary"):
+        migrated = 0
+        skipped = 0
+        failed: list[str] = []
+        token = gh["token"]
+        repo = gh["repo_name"]
+
+        for key, rel_path in PATHS.items():
+            if key.endswith("_dir"):
+                continue
+            c, s = _import_one(storage, rel_path, repo, token, failed)
+            migrated += c
+            skipped += s
+
+        for name in _github_list_dir(repo, token, PATHS["stock_data_dir"]):
+            rel = f"{PATHS['stock_data_dir']}/{name}"
+            c, s = _import_one(storage, rel, repo, token, failed)
+            migrated += c
+            skipped += s
+
+        for name in _github_list_dir(repo, token, PATHS["data_analysis_dir"]):
+            rel = f"{PATHS['data_analysis_dir']}/{name}"
+            c, s = _import_one(storage, rel, repo, token, failed)
+            migrated += c
+            skipped += s
+
+        st.success(f"Migration complete. Imported: {migrated}, Skipped(unchanged): {skipped}.")
+        if failed:
+            st.warning(f"Failed to migrate {len(failed)} files: {', '.join(failed[:8])}")
+
+================================================================================
+
+PROGRAM: tests/test_storage_backend.py
+--------------------------------------------------------------------------------
+from pathlib import Path
+
+import pandas as pd
+
+from Services.app.config import StorageConfig
+from Services.app.storage import DataStorage
+from Services.app.supabase_store import SupabaseConfig
+
+
+class DummySupabase:
+    def __init__(self):
+        self.writes = []
+        self.reads = {}
+
+    def enabled(self):
+        return True
+
+    def read_csv(self, path, columns):
+        return self.reads.get(path, pd.DataFrame(columns=columns))
+
+    def write_csv(self, path, data):
+        self.writes.append((path, data.copy()))
+        self.reads[path] = data.copy()
+
+    def list_paths(self, prefix):
+        return []
+
+
+def test_csv_backend_uses_supabase_when_configured(tmp_path: Path):
+    storage = DataStorage(
+        supabase_config=SupabaseConfig(url="https://x.supabase.co", key="k", table="app_files"),
+        local_root=tmp_path,
+        storage_config=StorageConfig(backend="csv"),
+    )
+    storage.supabase = DummySupabase()
+
+    ledger = pd.DataFrame(
+        [
+            {
+                "Date": "2026-01-01",
+                "Type": "TMS",
+                "Category": "DEPOSIT",
+                "Amount": 1000,
+                "Status": "Cleared",
+                "Due_Date": "2026-01-01",
+                "Ref_ID": "r1",
+                "Description": "test",
+                "Is_Non_Cash": "No",
+                "Dispute_Note": "",
+                "Fiscal_Year": "2082/83",
+            }
+        ]
+    )
+    storage.save_ledger(ledger)
+    assert storage.active_backend() == "supabase"
+    assert storage.last_write_ok() is True
+    assert any("tms_ledger_master.csv" in path for path, _ in storage.supabase.writes)
+
+
+def test_import_legacy_csv_is_idempotent(tmp_path: Path):
+    storage = DataStorage(
+        supabase_config=SupabaseConfig(url="https://x.supabase.co", key="k", table="app_files"),
+        local_root=tmp_path,
+        storage_config=StorageConfig(backend="supabase"),
+    )
+    storage.supabase = DummySupabase()
+
+    df = pd.DataFrame([{"A": 1, "B": 2}])
+    assert storage.import_legacy_csv("Data/User_Data/portfolio.csv", df, skip_if_same=True) is True
+    assert storage.import_legacy_csv("Data/User_Data/portfolio.csv", df, skip_if_same=True) is False
+
+================================================================================
+
+PROGRAM: tests/test_transactions.py
+--------------------------------------------------------------------------------
+from datetime import date
+
+import pandas as pd
+
+from Services.app.transactions import SmartTransaction, apply_smart_transaction
+
+
+def test_apply_smart_transaction_syncs_holdings_for_buy():
+    ledger = pd.DataFrame(columns=[
+        "Date", "Type", "Category", "Amount", "Status", "Due_Date", "Ref_ID", "Description", "Is_Non_Cash", "Dispute_Note", "Fiscal_Year"
+    ])
+    holdings = pd.DataFrame(columns=["Symbol", "Total_Qty", "Pledged_Qty", "LTP", "Haircut"])
+
+    txn = SmartTransaction(
+        txn_date=date(2026, 1, 1),
+        mode="BUY",
+        symbol="TEST",
+        qty=10,
+        price=100,
+        amount=0,
+        status="Cleared",
+        ref_id="r1",
+        description="buy test",
+    )
+
+    l2, h2 = apply_smart_transaction(ledger, holdings, txn)
+    assert len(l2) == 1
+    assert float(h2[h2["Symbol"] == "TEST"]["Total_Qty"].iloc[0]) == 10.0
+
+================================================================================
+
+PROGRAM: tests/conftest.py
+--------------------------------------------------------------------------------
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+================================================================================
+
+PROGRAM: tests/test_signals.py
+--------------------------------------------------------------------------------
+import pandas as pd
+
+from Services.app.services.signals import run_all_signal_models
+
+
+def test_signal_models_return_expected_keys():
+    df = pd.DataFrame(
+        {
+            "Date": pd.date_range("2024-01-01", periods=250, freq="D"),
+            "Open": [100 + i * 0.1 for i in range(250)],
+            "High": [101 + i * 0.1 for i in range(250)],
+            "Low": [99 + i * 0.1 for i in range(250)],
+            "Close": [100 + i * 0.1 for i in range(250)],
+            "Volume": [1000 + i for i in range(250)],
+        }
+    )
+    out = run_all_signal_models(df)
+    assert out["vpvr_rows"] == 20
+    assert "vpvr_signal" in out
+    assert "fvg_signal" in out
+    assert "wyckoff_signal" in out
+
+================================================================================
+
+PROGRAM: logs/app_events.jsonl
+--------------------------------------------------------------------------------
+{"ts": "2026-03-03T14:28:52Z", "event": "storage_write", "payload": {"path": "Data/TMS_Data/tms_ledger_master.csv", "message": "Update Ledger Master", "backend": "supabase", "ok": true, "remote_ok": true, "local_ok": true, "error": ""}}
+{"ts": "2026-03-03T14:28:52Z", "event": "storage_write", "payload": {"path": "Data/User_Data/portfolio.csv", "message": "Import legacy CSV", "backend": "supabase", "ok": true, "remote_ok": true, "local_ok": true, "error": ""}}
+
+
+================================================================================
+
+PROGRAM: Tabs/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Tabs/3_Ledger_History/history_view.py
+--------------------------------------------------------------------------------
+from Services.app.ui import render_history
+
+
+def render(storage):
+    render_history(storage.get_ledger())
+
+================================================================================
+
+PROGRAM: Tabs/3_Ledger_History/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Tabs/9_Restore/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Tabs/9_Restore/restore_view.py
+--------------------------------------------------------------------------------
+from restore import render_restore
+
+
+def render(storage):
+    render_restore(storage)
+
+================================================================================
+
+PROGRAM: Tabs/4_Analytics/analytics_view.py
+--------------------------------------------------------------------------------
+from Services.app.ui import render_analytics
+
+
+def render(storage):
+    render_analytics(storage.get_ledger(), storage.get_holdings())
+
+================================================================================
+
+PROGRAM: Tabs/4_Analytics/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Tabs/5_Terminal_Hub/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Tabs/5_Terminal_Hub/terminal_view.py
+--------------------------------------------------------------------------------
+from Services.app.terminal_ui import render_terminal_hub
+
+
+def render(storage):
+    render_terminal_hub(storage, storage.get_ledger(), storage.get_holdings())
+
+================================================================================
+
+PROGRAM: Tabs/8_Market_Predictor/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Tabs/8_Market_Predictor/market_predictor_view.py
+--------------------------------------------------------------------------------
+from Services.app.market_predictor import render_market_predictor_tab
+
+
+def render(storage):
+    render_market_predictor_tab(storage)
+
+================================================================================
+
+PROGRAM: Tabs/7_Manage_Data/manage_view.py
+--------------------------------------------------------------------------------
+from Services.app.ui import render_manage_data
+
+
+def render(storage):
+    render_manage_data(storage.get_ledger(), storage)
+
+================================================================================
+
+PROGRAM: Tabs/7_Manage_Data/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Tabs/6_Research_Hub/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Tabs/6_Research_Hub/research_view.py
+--------------------------------------------------------------------------------
+from Services.app.ui import render_research_hub
+
+
+def render(storage):
+    render_research_hub(storage)
+
+================================================================================
+
+PROGRAM: Tabs/2_Transaction_Center/transaction_view.py
+--------------------------------------------------------------------------------
+from Services.app.ui import render_new_entry
+
+
+def render(storage):
+    ledger = storage.get_ledger()
+    holdings = storage.get_holdings()
+    render_new_entry(ledger, holdings, storage)
+
+================================================================================
+
+PROGRAM: Tabs/2_Transaction_Center/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Tabs/1_Dashboard/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Tabs/1_Dashboard/portfolio_view.py
+--------------------------------------------------------------------------------
+from Services.app.logic import summarize_ledger
+from Services.app.ui import render_dashboard
+
+
+def render(storage):
+    ledger = storage.get_ledger()
+    holdings = storage.get_holdings()
+    summary = summarize_ledger(ledger, holdings, __import__('datetime').date.today())
+    render_dashboard(ledger, summary)
+
+================================================================================
+
+PROGRAM: Data/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Data/Market_Data/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Data/Market_Data/Stock_Data/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Data/Market_Data/Data_analysis/Visual.py
+--------------------------------------------------------------------------------
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
+from Services.app.config import load_storage_config, load_supabase_config
+from Services.app.storage import DataStorage
+
+st.subheader("📊 Visual Data Analysis")
+storage = DataStorage(supabase_config=load_supabase_config(), local_root=Path('.'), storage_config=load_storage_config())
+
+saved_files = storage.list_analysis_files()
+
+if saved_files:
+    selected_file = st.selectbox("Select Data File for Visualization:", saved_files)
+    if selected_file:
+        df = storage.get_analysis_data(selected_file)
+        if df.empty:
+            st.warning("File is empty.")
+        else:
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+            df = df.sort_values("Date").reset_index(drop=True)
+            df["Net_Qty"] = df["Buy_Qty"] - df["Sell_Qty"]
+            df["Cum_Net_Qty"] = df["Net_Qty"].cumsum()
+
+            c1, c2 = st.columns(2)
+            c1.plotly_chart(px.line(df, x="Date", y="Net_Qty", markers=True, title="Daily Net Qty"), use_container_width=True)
+            c2.plotly_chart(px.line(df, x="Date", y="Cum_Net_Qty", markers=True, title="Cumulative Net Qty"), use_container_width=True)
+            st.plotly_chart(px.bar(df, x="Date", y=["Buy_Qty", "Sell_Qty"], barmode="group", title="Buy/Sell Qty by Date"), use_container_width=True)
+            st.dataframe(df.tail(200), use_container_width=True)
+else:
+    st.info("No saved files found. Use Data Studio to save one first.")
+
+================================================================================
+
+PROGRAM: Data/Market_Data/Data_analysis/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Data/Market_Data/Data_analysis/Advanced_analysis.py
+--------------------------------------------------------------------------------
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
+from Services.app.config import load_storage_config, load_supabase_config
+from Services.app.storage import DataStorage
+
+st.subheader("🚀 Advanced Quantitative Analysis")
+storage = DataStorage(supabase_config=load_supabase_config(), local_root=Path('.'), storage_config=load_storage_config())
+
+saved_files = storage.list_analysis_files()
+
+if saved_files:
+    selected_file = st.selectbox("Select Broker Data to Analyze:", saved_files, key="advanced_broker_source")
+    if selected_file:
+        raw_df = storage.get_analysis_data(selected_file)
+        raw_df["Date"] = pd.to_datetime(raw_df["Date"])
+
+        min_date, max_date = raw_df["Date"].min().date(), raw_df["Date"].max().date()
+        date_range = st.date_input("🗓️ Select Range (Calculations adjust to range)", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="advanced_date_range")
+
+        if len(date_range) == 2:
+            mask = (raw_df["Date"].dt.date >= date_range[0]) & (raw_df["Date"].dt.date <= date_range[1])
+            df = raw_df.loc[mask].copy().reset_index(drop=True)
+
+            if not df.empty:
+                df["Net_Qty"] = df["Buy_Qty"] - df["Sell_Qty"]
+                df["Cum_Net_Qty"] = df["Net_Qty"].cumsum()
+                df["Total_Vol"] = df["Buy_Qty"] + df["Sell_Qty"]
+                df["Daily_VWAP"] = np.where(df["Total_Vol"] > 0, (df["Buy_Amount"] + df["Sell_Amount"]) / df["Total_Vol"], 0)
+
+                total_buy_qty = df["Buy_Qty"].sum()
+                total_buy_amt = df["Buy_Amount"].sum()
+                total_sell_qty = df["Sell_Qty"].sum()
+                total_sell_amt = df["Sell_Amount"].sum()
+                current_inventory = df["Cum_Net_Qty"].iloc[-1]
+
+                buy_wacc = (total_buy_amt / total_buy_qty) if total_buy_qty > 0 else 0
+                sell_wacc = (total_sell_amt / total_sell_qty) if total_sell_qty > 0 else 0
+                realized_pl = total_sell_qty * (sell_wacc - buy_wacc)
+                net_capital_flow = total_buy_amt - total_sell_amt
+                break_even = (net_capital_flow / current_inventory) if current_inventory > 0 else 0
+
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Average Buy WACC", f"Rs {buy_wacc:,.2f}")
+                m2.metric("Average Sell WACC", f"Rs {sell_wacc:,.2f}")
+                m3.metric("Inventory Left", f"{current_inventory:,.0f} Units")
+                m4, m5 = st.columns(2)
+                m4.metric("Realized P/L", f"Rs {realized_pl:,.2f}", delta="Profit" if realized_pl > 0 else "Loss")
+                m5.metric("Remaining Break-Even", f"Rs {break_even:,.2f}" if current_inventory > 0 else "N/A")
+
+                df_heat = df.copy()
+                nepse_days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"]
+                df_heat["Day"] = pd.Categorical(df_heat["Date"].dt.day_name(), categories=nepse_days, ordered=True)
+                df_heat["Month"] = df_heat["Date"].dt.strftime("%b %Y")
+                heat_pivot = df_heat.groupby(["Month", "Day"], observed=False)["Net_Qty"].sum().unstack().fillna(0)
+                fig_heat = px.imshow(heat_pivot, aspect="auto", color_continuous_scale="RdYlGn", title="Broker Activity Heatmap")
+                st.plotly_chart(fig_heat, use_container_width=True)
+else:
+    st.info("No data files available yet. Upload and save from Data Studio first.")
+
+================================================================================
+
+PROGRAM: Data/TMS_Data/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Data/User_Data/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Data/Logs/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Services/Data.py
+--------------------------------------------------------------------------------
+import json
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+from Services.app.config import load_storage_config, load_supabase_config
+from Services.app.storage import DataStorage
+
+storage = DataStorage(supabase_config=load_supabase_config(), local_root=Path('.'), storage_config=load_storage_config())
+
+st.title("📈 Advanced Data Analysis Studio")
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📤 Upload & Analyze",
+    "📂 Browse Saved Data",
+    "🚀 Advanced Analysis",
+    "📊 Visualization",
+    "🤖 AI Advisor",
+])
+
+with tab1:
+    uploaded_file = st.file_uploader("Upload raw data file (JSON or TXT)", type=["txt", "json"])
+    if uploaded_file is not None:
+        try:
+            raw_data = json.load(uploaded_file)
+            df = pd.DataFrame(raw_data.get("data", raw_data))
+
+            num_cols = ["b_qty", "s_qty", "b_amt", "s_amt"]
+            for col in num_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+            df["Date"] = pd.to_datetime(df["date"], errors="coerce")
+            df = df.sort_values(by="Date").reset_index(drop=True)
+            df.rename(columns={"b_qty": "Buy_Qty", "s_qty": "Sell_Qty", "b_amt": "Buy_Amount", "s_amt": "Sell_Amount"}, inplace=True, errors="ignore")
+
+            df["Net_Qty"] = df["Buy_Qty"] - df["Sell_Qty"]
+            df["Net_Amount"] = df["Buy_Amount"] - df["Sell_Amount"]
+            df["Total_Vol"] = df["Buy_Qty"] + df["Sell_Qty"]
+            df["Avg_30D_Vol"] = df["Total_Vol"].rolling(window=30, min_periods=1).mean()
+
+            st.dataframe(df.tail(300), use_container_width=True, height=380)
+
+            c_stock, c_tms, c_custom = st.columns(3)
+            stock_name = c_stock.text_input("Stock Symbol (e.g., NABIL)", "").upper().strip()
+            tms_no = c_tms.text_input("TMS/Broker No (e.g., 58)", "").strip()
+            custom_name = c_custom.text_input("Or Custom Filename", "").strip()
+            save_name = custom_name if custom_name else (f"{stock_name}_{tms_no}" if stock_name and tms_no else "")
+
+            if st.button("Save to Supabase", use_container_width=True, type="primary"):
+                if not save_name:
+                    st.error("Provide a filename.")
+                else:
+                    cols_to_save = ["Date", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Sell_Amount", "Net_Amount"]
+                    save_df = df[cols_to_save].copy()
+                    save_df["Date"] = pd.to_datetime(save_df["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+
+                    existing = storage.get_analysis_data(save_name)
+                    if not existing.empty and "Date" in existing.columns:
+                        merged = pd.concat([existing, save_df], ignore_index=True).drop_duplicates(subset=["Date"], keep="last").sort_values("Date")
+                    else:
+                        merged = save_df
+                    storage.save_analysis_data(save_name, merged)
+                    st.success(f"Saved `{save_name}.csv` to Supabase/local mirror.")
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
+
+with tab2:
+    st.subheader("📂 Browse Saved Data")
+    saved_files = storage.list_analysis_files()
+    selected_file = st.selectbox("Select file:", saved_files, key="data_tab2_browse") if saved_files else None
+    if selected_file:
+        hist_df = storage.get_analysis_data(selected_file)
+        st.dataframe(hist_df, use_container_width=True)
+
+with tab3:
+    namespace3 = globals().copy()
+    namespace3["__name__"] = "advanced_analysis_module"
+    with open("Data/Market_Data/Data_analysis/Advanced_analysis.py", encoding="utf-8") as f:
+        exec(compile(f.read(), "Advanced_analysis.py", "exec"), namespace3)
+
+with tab4:
+    namespace4 = globals().copy()
+    namespace4["__name__"] = "visual_analysis_module"
+    with open("Data/Market_Data/Data_analysis/Visual.py", encoding="utf-8") as f:
+        exec(compile(f.read(), "Visual.py", "exec"), namespace4)
+
+with tab5:
+    namespace5 = globals().copy()
+    namespace5["__name__"] = "ai_advisor_module"
+    with open("Services/Advisor.py", encoding="utf-8") as f:
+        exec(compile(f.read(), "Advisor.py", "exec"), namespace5)
+
+================================================================================
+
+PROGRAM: Services/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Services/scrape.py
+--------------------------------------------------------------------------------
+import requests
+from bs4 import BeautifulSoup
+
+def fetch_live_single_merolagani(symbol):
+    """Refined scraping method for Merolagani."""
+    url = f"https://merolagani.com/CompanyDetail.aspx?symbol={symbol}"
+    
+    # Crucial: Mimic a real browser so they don't block you
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    data = {'price': 0.0, 'change': 0.0, 'high': 0.0, 'low': 0.0}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            print(f"Error: Could not access {symbol} page (Status {response.status_code})")
+            return data
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 1. GET PRICE (LTP)
+        # Try the ID first, then fall back to searching the table
+        price_tag = soup.select_one("#ctl00_ContentPlaceHolder1_CompanyDetail1_lblMarketPrice")
+        if price_tag:
+            data['price'] = float(price_tag.text.strip().replace(",", ""))
+        else:
+            # Fallback: Find the table cell containing "Market Price"
+            price_row = soup.find('th', string=lambda t: t and "Market Price" in t)
+            if price_row:
+                data['price'] = float(price_row.find_next_sibling('td').text.strip().replace(",", ""))
+
+        # 2. GET CHANGE & 52-WEEK RANGE
+        rows = soup.find_all('tr')
+        for row in rows:
+            text = row.get_text()
+            
+            # Extract Change
+            if "% Change" in text:
+                cols = row.find_all('td')
+                if cols:
+                    try:
+                        # Extract only the numeric part before the %
+                        change_text = cols[0].text.strip().split('(')[0].replace(",", "")
+                        data['change'] = float(change_text)
+                    except: pass
+            
+            # Extract 52 Week High/Low
+            if "52 Weeks High - Low" in text:
+                tds = row.find_all('td')
+                if tds:
+                    range_text = tds[-1].text.strip().replace(",", "")
+                    if "-" in range_text:
+                        parts = range_text.split("-")
+                        data['high'] = float(parts[0].strip())
+                        data['low'] = float(parts[1].strip())
+        
+        return data
+    except Exception as e:
+        print(f"Scraping Error for {symbol}: {e}")
+        return data
+
+def get_market_data(symbols):
+    """Main function to loop through your symbols."""
+    results = {}
+    for sym in symbols:
+        print(f"Fetching {sym}...")
+        results[sym] = fetch_live_single_merolagani(sym)
+    return results
+
+# --- TEST IT ---
+if __name__ == "__main__":
+    # Add your stock symbols here
+    my_stocks = ["NABIL", "UPPER", "HRL"]
+    
+    stock_info = get_market_data(my_stocks)
+    
+    print("\n--- Final Data ---")
+    for sym, info in stock_info.items():
+        print(f"{sym}: Price={info['price']}, Change={info['change']}, 52W High={info['high']}")
+
+================================================================================
+
+PROGRAM: Services/Advisor.py
+--------------------------------------------------------------------------------
+from pathlib import Path
+
+import google.generativeai as genai
+import pandas as pd
+import streamlit as st
+
+from Services.app.config import load_storage_config, load_supabase_config
+from Services.app.storage import DataStorage
+
+st.header("🤖 AI Quantitative Advisor")
+st.markdown("Your personal AI analyst powered by Google Gemini. Select a dataset, and let the AI find hidden patterns in broker behavior.")
+
+storage = DataStorage(supabase_config=load_supabase_config(), local_root=Path('.'), storage_config=load_storage_config())
+
+try:
+    genai.configure(api_key=st.secrets["gemini"]["api_key"])
+    model = genai.GenerativeModel("gemini-2.0-flash")
+except Exception as e:
+    st.error(f"❌ Gemini setup error: {e}")
+    st.stop()
+
+files = storage.list_analysis_files()
+if not files:
+    st.info("No saved data found. Go to Data Analysis and save a file first!")
+else:
+    selected_file = st.selectbox("Select Broker Data for AI Analysis:", files)
+    if selected_file:
+        try:
+            df = storage.get_analysis_data(selected_file)
+            if df.empty:
+                st.warning("Selected file has no rows.")
+                st.stop()
+
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+            total_days = len(df)
+            net_inventory = (pd.to_numeric(df["Buy_Qty"], errors="coerce").fillna(0) - pd.to_numeric(df["Sell_Qty"], errors="coerce").fillna(0)).sum()
+            total_buy_amt = pd.to_numeric(df["Buy_Amount"], errors="coerce").fillna(0).sum()
+            total_buy_qty = pd.to_numeric(df["Buy_Qty"], errors="coerce").fillna(0).sum()
+            wacc = (total_buy_amt / total_buy_qty) if total_buy_qty > 0 else 0
+            recent_df = df.tail(5).copy()
+            recent_df["Net_Qty"] = pd.to_numeric(recent_df["Buy_Qty"], errors="coerce").fillna(0) - pd.to_numeric(recent_df["Sell_Qty"], errors="coerce").fillna(0)
+            recent_trend = recent_df[["Date", "Net_Qty"]].to_string(index=False)
+
+            st.write(f"**Analyzing:** `{selected_file}` | **Total Days:** `{total_days}`")
+            user_question = st.text_input(
+                "Ask the AI a specific question, or leave blank for a general report:",
+                placeholder="E.g., Are they accumulating or distributing? What is their WACC?",
+            )
+
+            if st.button("🧠 Generate AI Analysis", type="primary"):
+                prompt = f"""
+                You are an elite quantitative analyst for NEPSE.
+                DATA SUMMARY:
+                - Broker File: {selected_file}
+                - Trading Days Logged: {total_days}
+                - Current Holding Inventory (Net Qty): {net_inventory}
+                - Estimated Weighted Average Cost (WACC): Rs {wacc:.2f}
+                RECENT 5-DAY MOMENTUM (Net Qty):
+                {recent_trend}
+                User's specific question: {user_question if user_question else "Provide a general accumulation/distribution analysis and strategic advice."}
+                """
+                response = model.generate_content(prompt)
+                st.write("---")
+                st.markdown("### 🤖 AI Analyst Report")
+                st.write(response.text)
+        except Exception as e:
+            st.error(f"Error reading data or contacting AI: {e}")
+
+================================================================================
+
+PROGRAM: Services/app/ui.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+import importlib
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
+from Services.app.logic import LedgerSummary, fiscal_year_for_nepal
+from Services.app.storage import DataStorage
+from Services.app.transactions import SmartTransaction, apply_smart_transaction, smart_to_ledger_row
+from Services.app.market_predictor import render_market_predictor_tab
+
+
+def inject_css() -> None:
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stMetric"] {background-color:#f8f9fa; border:1px solid #e9ecef; padding:10px; border-radius:8px;}
+        .risk-alert {background-color:#ffcccb; padding:15px; border-radius:8px; color:#8b0000; font-weight:bold; border-left:5px solid red;}
+        .safe-zone {background-color:#d4edda; padding:15px; border-radius:8px; color:#155724; border-left:5px solid green;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _np_now() -> str:
+    return (datetime.utcnow() + pd.Timedelta(hours=5, minutes=45)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _append_activity(storage: DataStorage, category: str, symbol: str, action: str, details: str, amount: float) -> None:
+    log_df = storage.get_terminal_data("activity_log")
+    row = pd.DataFrame([
+        {
+            "Timestamp": _np_now(),
+            "Category": category,
+            "Symbol": symbol,
+            "Action": action,
+            "Details": details,
+            "Amount": amount,
+        }
+    ])
+    storage.save_terminal_data("activity_log", pd.concat([row, log_df], ignore_index=True))
+
+
+def _sync_tms_trx(storage: DataStorage, txn: SmartTransaction, medium: str, normalized_amount: float) -> None:
+    trx_df = storage.get_terminal_data("tms_trx")
+    entry = pd.DataFrame([
+        {
+            "Date": txn.txn_date,
+            "Stock": txn.symbol,
+            "Type": txn.mode,
+            "Medium": medium,
+            "Amount": normalized_amount,
+            "Charge": 0.0,
+            "Remark": txn.description,
+            "Reference": txn.ref_id,
+        }
+    ])
+    storage.save_terminal_data("tms_trx", pd.concat([trx_df, entry], ignore_index=True))
+
+
+def render_sidebar_holdings(storage: DataStorage, holdings_df: pd.DataFrame) -> None:
+    with st.sidebar.expander("📦 Portfolio & Collateral"):
+        sym = st.text_input("Symbol", placeholder="NICA").upper().strip()
+        c1, c2 = st.columns(2)
+        qty = c1.number_input("Pledged Qty", min_value=0)
+        ltp = c2.number_input("LTP", min_value=0.0)
+        if st.button("Update Stock") and sym:
+            try:
+                curr_h = storage.get_holdings()
+                curr_h = curr_h[curr_h["Symbol"] != sym]
+                new_h = pd.DataFrame([{"Symbol": sym, "Total_Qty": qty, "Pledged_Qty": qty, "LTP": ltp, "Haircut": 25}])
+                storage.save_holdings(pd.concat([curr_h, new_h], ignore_index=True))
+                _append_activity(storage, "TMS", sym, "HOLDING_UPDATE", "Updated holding from sidebar", 0.0)
+                st.success(f"Updated {sym}")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Save failed: {e}")
+
+        if not holdings_df.empty:
+            st.dataframe(holdings_df[["Symbol", "Total_Qty", "Pledged_Qty", "LTP"]], height=170, width="stretch")
+
+
+def render_dashboard(df: pd.DataFrame, summary: LedgerSummary) -> None:
+    st.title("🏦 Financial Command Center")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("📅 Today (Due)", f"Rs {abs(summary.t0_due):,.0f}", delta="Pay Now" if summary.t0_due < 0 else "Receive")
+    k2.metric("📆 Tomorrow (T+1)", f"Rs {summary.t1_due:,.0f}")
+    k3.metric("🔋 Trading Limit", f"Rs {summary.trading_power:,.0f}", delta=f"{summary.utilization_rate:.1f}% Used")
+    k4.metric("⚖️ Net Pending", f"Rs {summary.net_due:,.0f}", delta=f"Pay: {summary.payable_due:,.0f} | Rec: {summary.receivable_due:,.0f}")
+
+    st.markdown("---")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("💵 Net Cash Invested", f"Rs {summary.net_cash_invested:,.0f}")
+        st.metric("🏦 TMS Balance", f"Rs {summary.tms_cash_balance:,.0f}")
+    with c2:
+        if summary.tms_cash_balance < -50:
+            st.markdown(f"<div class='risk-alert'>⚠️ Negative collateral of Rs {abs(summary.tms_cash_balance):,.2f}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div class='safe-zone'>✅ All Systems Green.</div>", unsafe_allow_html=True)
+
+        if not summary.pending_df.empty:
+            st.dataframe(summary.pending_df[["Date", "Type", "Category", "Amount", "Due_Date"]], height=220, width="stretch")
+
+
+def render_new_entry(df: pd.DataFrame, holdings_df: pd.DataFrame, storage: DataStorage) -> None:
+    st.header("📝 Integrated Transaction Center")
+    tab1, tab2 = st.tabs(["⚡ Smart Entry (syncs all)", "🧾 Manual Ledger Entry"])
+
+    with tab1:
+        st.caption("Smart mode updates ledger + holdings + activity log + tms transaction ledger")
+        with st.form("smart_entry_form"):
+            c1, c2, c3, c4 = st.columns(4)
+            txn_date = c1.date_input("Date", value=date.today())
+            mode = c2.selectbox("Mode", ["BUY", "SELL", "DEPOSIT", "WITHDRAW", "DIRECT_PAY", "PRIMARY_INVEST", "EXPENSE"])
+            status = c3.selectbox("Status", ["Pending", "Cleared"], index=1)
+            medium = c4.selectbox("Bank/Medium", ["Bank", "Global", "Collateral", "Cash", "Other"], index=0)
+
+            c5, c6, c7 = st.columns(3)
+            symbol = c5.text_input("Symbol", value="").upper().strip()
+            qty = c6.number_input("Qty", min_value=0.0, step=1.0)
+            price = c7.number_input("Price", min_value=0.0, step=0.01)
+
+            amount = st.number_input("Direct Amount (for deposit/withdraw/expense)", min_value=0.0, step=1.0)
+            due_days = st.number_input("Due in days", min_value=0, value=2)
+            ref_id = st.text_input("Reference ID")
+            desc = st.text_input("Description")
+            submit = st.form_submit_button("💾 Save Smart Transaction")
+
+        if submit:
+            final_desc = f"[{medium}] {desc}".strip()
+            txn = SmartTransaction(
+                txn_date=txn_date,
+                mode=mode,
+                symbol=symbol,
+                qty=qty,
+                price=price,
+                amount=amount,
+                status=status,
+                ref_id=ref_id,
+                description=final_desc,
+                due_days=int(due_days),
+            )
+            row = smart_to_ledger_row(txn)
+            normalized_amount = row["Amount"] if mode in {"DEPOSIT", "SELL", "RECEIVABLE"} else -row["Amount"]
+            try:
+                new_ledger, new_holdings = apply_smart_transaction(df, holdings_df, txn)
+                storage.save_ledger(new_ledger)
+                storage.save_holdings(new_holdings)
+                _sync_tms_trx(storage, txn, medium, normalized_amount)
+                _append_activity(storage, "TMS", symbol or "N/A", mode, final_desc, normalized_amount)
+                st.success("Smart transaction saved. All connected datasets synced.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Smart transaction failed to persist: {e}")
+
+    with tab2:
+        with st.form("entry_form"):
+            c1, c2, c3, c4 = st.columns(4)
+            txn_date = c1.date_input("Date", value=date.today(), key="m_date")
+            txn_type = c2.selectbox("Type", ["BUY", "SELL", "CHARGE", "FUND", "OTHER"], key="m_type")
+            category = c3.selectbox("Category", ["DEPOSIT", "WITHDRAW", "PAYABLE", "RECEIVABLE", "DIRECT_PAY", "EXPENSE", "PRIMARY_INVEST"], key="m_cat")
+            medium = c4.selectbox("Bank/Medium", ["Bank", "Global", "Collateral", "Cash", "Other"], key="m_medium")
+
+            c5, c6, c7 = st.columns(3)
+            amount = c5.number_input("Amount", min_value=0.0, step=1000.0, key="m_amt")
+            due_days = c6.number_input("Due in days", min_value=0, value=2, key="m_due")
+            is_non_cash = c7.checkbox("Non-Cash", value=False, key="m_non_cash")
+
+            ref_id = st.text_input("Reference ID", key="m_ref")
+            desc = st.text_input("Description", key="m_desc")
+
+            if st.form_submit_button("💾 Save Manual Ledger Entry"):
+                final_desc = f"[{medium}] {desc}".strip()
+                new_row = pd.DataFrame([
+                    {
+                        "Date": txn_date,
+                        "Type": txn_type,
+                        "Category": category,
+                        "Amount": amount,
+                        "Status": "Pending",
+                        "Due_Date": txn_date + timedelta(days=due_days),
+                        "Ref_ID": ref_id,
+                        "Description": final_desc,
+                        "Is_Non_Cash": is_non_cash,
+                        "Dispute_Note": "",
+                        "Fiscal_Year": fiscal_year_for_nepal(txn_date),
+                    }
+                ])
+                try:
+                    storage.save_ledger(pd.concat([df, new_row], ignore_index=True))
+                    _append_activity(storage, "TMS", "N/A", "MANUAL_LEDGER", final_desc, float(amount))
+                    st.success("Manual entry saved.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Manual entry failed to persist: {e}")
+
+
+def render_history(df: pd.DataFrame) -> None:
+    st.header("📜 Transaction Ledger")
+    if df.empty:
+        st.info("No records found.")
+        return
+    search = st.text_input("Search Text")
+    view_df = df.copy()
+    if search:
+        view_df = view_df[view_df["Description"].astype(str).str.contains(search, case=False, na=False)]
+    view_df = view_df.sort_values("Date", ascending=False)
+
+    def _row_style(row):
+        cat = str(row.get("Category", ""))
+        status = str(row.get("Status", "")).lower()
+        if status == "pending":
+            return ["background-color:#fff3cd;color:#7a4e00;font-weight:600"] * len(row)
+        if cat == "DEPOSIT":
+            return ["background-color:#e8f7ee"] * len(row)
+        if cat in {"PAYABLE", "EXPENSE", "WITHDRAW"}:
+            return ["background-color:#fdecec"] * len(row)
+        if cat in {"RECEIVABLE", "DIRECT_PAY"}:
+            return ["background-color:#e9f2ff"] * len(row)
+        return [""] * len(row)
+
+    styled = view_df.style.apply(_row_style, axis=1).format({"Amount": "Rs {:,.2f}"})
+    st.dataframe(styled, width="stretch", height=600)
+    st.download_button("⬇️ Download CSV", view_df.to_csv(index=False).encode("utf-8"), "tms_ledger.csv", "text/csv")
+
+
+def render_analytics(df: pd.DataFrame, holdings_df: pd.DataFrame) -> None:
+    st.header("📊 Integrated Analytics")
+    if df.empty:
+        st.warning("No data available to visualize.")
+        return
+    tab1, tab2, tab3 = st.tabs(["📈 Cash Flow", "🍰 Category Mix", "📦 Holdings Snapshot"])
+    with tab1:
+        cf_df = df.copy().sort_values("Date")
+        cf_df["Flow"] = cf_df.apply(lambda x: -x["Amount"] if x["Category"] == "WITHDRAW" else (x["Amount"] if x["Category"] in ["DEPOSIT", "PRIMARY_INVEST", "DIRECT_PAY"] else 0), axis=1)
+        cf_df["Cumulative"] = cf_df["Flow"].cumsum()
+        st.plotly_chart(px.line(cf_df, x="Date", y="Cumulative", markers=True), width="stretch")
+    with tab2:
+        c1, c2 = st.columns(2)
+        c1.plotly_chart(px.pie(df, values="Amount", names="Category", hole=0.4), width="stretch")
+        exp_df = df[df["Category"] == "EXPENSE"]
+        if not exp_df.empty:
+            c2.plotly_chart(px.bar(exp_df, x="Type", y="Amount", color="Type"), width="stretch")
+    with tab3:
+        if holdings_df.empty:
+            st.info("No holdings available.")
+        else:
+            view = holdings_df.copy()
+            view["Gross_Value"] = view["Total_Qty"] * view["LTP"]
+            st.dataframe(view, width="stretch")
+
+
+def _run_tool(module_name: str, label: str) -> None:
+    try:
+        module = importlib.import_module(module_name)
+        module = importlib.reload(module)
+        run_fn = getattr(module, "render", None) or getattr(module, "app", None)
+        if callable(run_fn):
+            run_fn()
+    except Exception as e:
+        if type(e).__name__ in ["StopException", "RerunException"]:
+            raise e
+        st.error(f"❌ Error loading {label}: {e}")
+
+
+def _signal_lab() -> None:
+    st.subheader("📡 Signal Lab (Buy/Sell Scan)")
+    csv_files = storage.list_stock_data_files()
+    if not csv_files:
+        st.info("No stock files in Stock_Data.")
+        return
+    sel = st.selectbox("Choose stock data", csv_files, key="signal_lab_stock")
+    df = storage.get_stock_data(sel)
+
+    for col in ["Close", "LTP", "close"]:
+        if col in df.columns:
+            price_col = col
+            break
+    else:
+        st.warning("No close/LTP column found.")
+        return
+
+    price = pd.to_numeric(df[price_col], errors="coerce").dropna().reset_index(drop=True)
+    if len(price) < 30:
+        st.warning("Need at least 30 rows for MA signal scan.")
+        return
+
+    temp = pd.DataFrame({"Price": price})
+    temp["MA10"] = temp["Price"].rolling(10).mean()
+    temp["MA20"] = temp["Price"].rolling(20).mean()
+    temp = temp.dropna().reset_index(drop=True)
+    last = temp.iloc[-1]
+    signal = "BUY" if last["MA10"] > last["MA20"] else "SELL"
+    confidence = abs(last["MA10"] - last["MA20"]) / max(last["Price"], 1) * 100
+
+    c1, c2 = st.columns(2)
+    c1.metric("Signal", signal)
+    c2.metric("MA Spread %", f"{confidence:.2f}%")
+    st.plotly_chart(px.line(temp.tail(180), y=["Price", "MA10", "MA20"], title=f"{sel} Momentum Lens"), width="stretch")
+
+
+def render_research_hub(storage: DataStorage) -> None:
+    st.header("🧠 Research Hub")
+    st.caption("Improved reliability + expanded NEPSE decision tabs.")
+
+    health = {
+        "Data Studio": "Services/Data.py",
+        "AI Advisor": "Services/Advisor.py",
+        "Advanced Analysis": "Data/Market_Data/Data_analysis/Advanced_analysis.py",
+        "Visual Analysis": "Data/Market_Data/Data_analysis/Visual.py",
+        "Stock Graph": "Services/Stock_Graph/Graph.py",
+        "Elliott Scanner": "Services/Stock_Graph/Elliot_Wave.py",
+    }
+    with st.expander("🔍 Tool Health", expanded=False):
+        for name, path in health.items():
+            ok = "✅" if Path(path).exists() else "❌"
+            st.write(f"{ok} {name} — `{path}`")
+
+    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs(["Data Studio", "AI Advisor", "Advanced Analysis", "Visual Analysis", "Stock Graph", "Elliott Scanner", "Signal Lab", "Market Predictor"])
+    with t1:
+        _run_tool("Services.Data", "Data Analysis")
+    with t2:
+        _run_tool("Services.Advisor", "AI Advisor")
+    with t3:
+        _run_tool("Data.Market_Data.Data_analysis.Advanced_analysis", "Advanced Analysis")
+    with t4:
+        _run_tool("Data.Market_Data.Data_analysis.Visual", "Visual Analysis")
+    with t5:
+        _run_tool("Services.Stock_Graph.Graph", "Stock Graph")
+    with t6:
+        _run_tool("Services.Stock_Graph.Elliot_Wave", "Elliott Wave Scanner")
+    with t7:
+        _signal_lab()
+    with t8:
+        render_market_predictor_tab(storage)
+
+
+def render_manage_data(df: pd.DataFrame, storage: DataStorage) -> None:
+    st.header("🛠️ Data Management")
+    with st.expander("🩺 Storage Health", expanded=False):
+        health = storage.get_storage_health()
+        st.json(health)
+        if not health.get("ok", True):
+            st.warning("Last write had an issue. Please review the error and retry.")
+
+    if df.empty:
+        st.info("No data to manage.")
+        return
+    work_df = df.copy()
+    work_df["Label"] = work_df.apply(lambda x: f"{x['Date']} | {x['Category']} | Rs {x['Amount']} | {x['Description']}", axis=1)
+    selected = st.selectbox("Select Transaction", work_df["Label"].tolist())
+    idx = work_df[work_df["Label"] == selected].index[0]
+
+    note = st.text_input("Dispute note", value=str(work_df.at[idx, "Dispute_Note"]))
+    c1, c2 = st.columns(2)
+    if c1.button("Update Note"):
+        work_df.at[idx, "Dispute_Note"] = note
+        storage.save_ledger(work_df.drop(columns=["Label"]))
+        _append_activity(storage, "TMS", "N/A", "NOTE_UPDATE", f"Updated note for row {idx}", 0.0)
+        st.success("Note updated")
+        st.rerun()
+    if c2.button("Delete Transaction"):
+        deleted_amt = float(work_df.at[idx, "Amount"])
+        work_df = work_df.drop(index=idx).drop(columns=["Label"])
+        storage.save_ledger(work_df)
+        _append_activity(storage, "TMS", "N/A", "DELETE", f"Deleted transaction index {idx}", deleted_amt)
+        st.error("Deleted")
+        st.rerun()
+
+================================================================================
+
+PROGRAM: Services/app/storage.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+import hashlib
+import sqlite3
+from pathlib import Path
+
+import pandas as pd
+
+from Services.app.config import StorageConfig
+from Services.app.logger import log_event
+from Services.app.supabase_store import SupabaseConfig, SupabaseFileStore
+
+LEDGER_COLUMNS = [
+    "Date",
+    "Type",
+    "Category",
+    "Amount",
+    "Status",
+    "Due_Date",
+    "Ref_ID",
+    "Description",
+    "Is_Non_Cash",
+    "Dispute_Note",
+    "Fiscal_Year",
+]
+HOLDINGS_COLUMNS = ["Symbol", "Total_Qty", "Pledged_Qty", "LTP", "Haircut"]
+
+PATHS = {
+    "ledger": "Data/TMS_Data/tms_ledger_master.csv",
+    "holdings": "Data/TMS_Data/tms_holdings.csv",
+    "tms_trx": "Data/TMS_Data/tms_trx.csv",
+    "portfolio": "Data/User_Data/portfolio.csv",
+    "watchlist": "Data/User_Data/watchlist.csv",
+    "history": "Data/User_Data/history.csv",
+    "diary": "Data/User_Data/diary.csv",
+    "wealth": "Data/User_Data/wealth.csv",
+    "data_metrics": "Data/User_Data/Data.csv",
+    "activity_log": "Data/Logs/activity_log.csv",
+    "cache": "Data/Logs/cache.csv",
+    "price_log": "Data/Logs/price_log.csv",
+    "error_log": "Data/Logs/error_log.csv",
+    "stock_data_dir": "Data/Market_Data/Stock_Data",
+    "data_analysis_dir": "Data/Market_Data/Data_analysis",
+}
+
+TERMINAL_SCHEMAS = {
+    "portfolio": ["Symbol", "Sector", "Units", "Total_Cost", "WACC", "Buy_Date", "Stop_Loss", "Notes"],
+    "watchlist": ["Symbol", "Target", "Remark"],
+    "activity_log": ["Timestamp", "Category", "Symbol", "Action", "Details", "Amount"],
+    "history": ["Date", "Buy_Date", "Symbol", "Units", "Buy_Price", "Sell_Price", "Invested_Amount", "Received_Amount", "Net_PL", "PL_Pct", "Reason"],
+    "diary": ["Date", "Symbol", "Note", "Emotion", "Mistake", "Strategy"],
+    "cache": ["Symbol", "LTP", "Change", "High52", "Low52", "LastUpdated"],
+    "wealth": ["Date", "Total_Investment", "Current_Value", "Total_PL", "Day_Change", "Sold_Volume"],
+    "price_log": ["Date", "Symbol", "LTP"],
+    "data_metrics": ["Date", "Realized_PL", "Realized_PL_Pct", "Unrealized_PL", "Unrealized_PL_Pct"],
+    "error_log": ["Date", "Time", "Context", "Error_Message", "Traceback"],
+    "tms_trx": ["Date", "Stock", "Type", "Medium", "Amount", "Charge", "Remark", "Reference"],
+}
+
+
+class DataStorage:
+    def __init__(self, supabase_config: SupabaseConfig | None, local_root: Path, storage_config: StorageConfig | None = None):
+        self.local_root = local_root
+        self.storage_config = storage_config or StorageConfig()
+        self.sqlite_path = (local_root / self.storage_config.sqlite_path).resolve()
+        self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+        self.supabase = SupabaseFileStore(supabase_config)
+        self.last_write_status: dict[str, str | bool] = {
+            "ok": True,
+            "backend": self.active_backend(),
+            "path": "",
+            "remote_ok": True,
+            "local_ok": True,
+            "error": "",
+        }
+
+    def _table_name(self, logical_key: str) -> str:
+        return logical_key.replace("/", "__")
+
+    def _use_supabase(self) -> bool:
+        if not self.supabase.enabled():
+            return False
+        return self.storage_config.backend in {"supabase", "csv"}
+
+    def _resolve(self, logical_key: str) -> str:
+        return PATHS.get(logical_key, logical_key)
+
+    def _read_sqlite(self, logical_key: str, columns: list[str]) -> pd.DataFrame:
+        table = self._table_name(logical_key)
+        if not self.sqlite_path.exists():
+            return pd.DataFrame(columns=columns)
+        try:
+            with sqlite3.connect(self.sqlite_path) as conn:
+                return pd.read_sql_query(f'SELECT * FROM "{table}"', conn)
+        except Exception:
+            return pd.DataFrame(columns=columns)
+
+    def _save_sqlite(self, logical_key: str, data: pd.DataFrame) -> None:
+        table = self._table_name(logical_key)
+        with sqlite3.connect(self.sqlite_path) as conn:
+            data.to_sql(table, conn, if_exists="replace", index=False)
+
+    def _read(self, logical_key: str, columns: list[str]) -> pd.DataFrame:
+        rel_path = self._resolve(logical_key)
+        if self.storage_config.backend == "sqlite":
+            return self._read_sqlite(logical_key, columns)
+
+        if self._use_supabase():
+            df = self.supabase.read_csv(rel_path, columns)
+            if not df.empty:
+                return df
+
+        path = self.local_root / rel_path
+        if path.exists():
+            return pd.read_csv(path)
+        return pd.DataFrame(columns=columns)
+
+    def _set_status(self, *, ok: bool, path: str, remote_ok: bool, local_ok: bool, error: str = "") -> None:
+        self.last_write_status = {
+            "ok": ok,
+            "backend": self.active_backend(),
+            "path": path,
+            "remote_ok": remote_ok,
+            "local_ok": local_ok,
+            "error": error,
+        }
+
+    def _save(self, logical_key: str, data: pd.DataFrame, message: str) -> None:
+        rel_path = self._resolve(logical_key)
+        remote_ok = True
+        local_ok = True
+        err = ""
+
+        if self.storage_config.backend == "sqlite":
+            self._save_sqlite(logical_key, data)
+
+        if self._use_supabase():
+            try:
+                self.supabase.write_csv(rel_path, data)
+            except Exception as ex:
+                remote_ok = False
+                err = f"Supabase write failed: {ex}"
+
+        try:
+            path = self.local_root / rel_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(data.to_csv(index=False), encoding="utf-8")
+        except Exception as ex:
+            local_ok = False
+            err = f"{err} | Local mirror write failed: {ex}".strip(" |")
+
+        ok = remote_ok and local_ok if self._use_supabase() else local_ok
+        self._set_status(ok=ok, path=rel_path, remote_ok=remote_ok, local_ok=local_ok, error=err)
+
+        log_event(
+            "storage_write",
+            {
+                "path": rel_path,
+                "message": message,
+                "backend": self.active_backend(),
+                "ok": ok,
+                "remote_ok": remote_ok,
+                "local_ok": local_ok,
+                "error": err,
+            },
+        )
+
+        if not ok:
+            raise RuntimeError(err or "Storage write failed")
+
+    def active_backend(self) -> str:
+        if self._use_supabase():
+            return "supabase"
+        return self.storage_config.backend
+
+    def get_storage_health(self) -> dict[str, str | bool]:
+        return self.last_write_status
+
+    def last_write_ok(self) -> bool:
+        return bool(self.last_write_status.get("ok", False))
+
+    def import_legacy_csv(self, rel_path: str, data: pd.DataFrame, skip_if_same: bool = True) -> bool:
+        existing = self._read(rel_path, list(data.columns))
+        if skip_if_same and not existing.empty:
+            old = existing.to_csv(index=False)
+            new = data.to_csv(index=False)
+            if hashlib.sha256(old.encode()).hexdigest() == hashlib.sha256(new.encode()).hexdigest():
+                return False
+        self._save(rel_path, data, "Import legacy CSV")
+        return True
+
+    def get_ledger(self) -> pd.DataFrame:
+        df = self._read("ledger", LEDGER_COLUMNS)
+        if df.empty:
+            return pd.DataFrame(columns=LEDGER_COLUMNS)
+        for c in ["Date", "Due_Date"]:
+            if c in df.columns:
+                df[c] = pd.to_datetime(df[c], errors="coerce").dt.date
+        for col in LEDGER_COLUMNS:
+            if col not in df.columns:
+                df[col] = ""
+        return df[LEDGER_COLUMNS]
+
+    def save_ledger(self, data: pd.DataFrame) -> None:
+        save_df = data.copy()
+        save_df["Date"] = pd.to_datetime(save_df["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        save_df["Due_Date"] = pd.to_datetime(save_df["Due_Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        self._save("ledger", save_df[LEDGER_COLUMNS], "Update Ledger Master")
+
+    def get_holdings(self) -> pd.DataFrame:
+        df = self._read("holdings", HOLDINGS_COLUMNS)
+        for col in HOLDINGS_COLUMNS:
+            if col not in df.columns:
+                df[col] = 0 if col != "Symbol" else ""
+        return df[HOLDINGS_COLUMNS]
+
+    def save_holdings(self, data: pd.DataFrame) -> None:
+        self._save("holdings", data[HOLDINGS_COLUMNS], "Update Holdings")
+
+    def get_terminal_data(self, logical_key: str) -> pd.DataFrame:
+        cols = TERMINAL_SCHEMAS.get(logical_key, [])
+        df = self._read(logical_key, cols)
+        for col in cols:
+            if col not in df.columns:
+                df[col] = ""
+        return df[cols] if cols else df
+
+    def save_terminal_data(self, logical_key: str, data: pd.DataFrame) -> None:
+        cols = TERMINAL_SCHEMAS.get(logical_key)
+        if cols:
+            for col in cols:
+                if col not in data.columns:
+                    data[col] = ""
+            data = data[cols]
+        self._save(logical_key, data, f"Update {logical_key}")
+
+    def list_stock_data_files(self) -> list[str]:
+        rel_dir = PATHS["stock_data_dir"]
+        if self._use_supabase():
+            files = self.supabase.list_paths(rel_dir + "/")
+            if files:
+                return sorted([Path(p).name for p in files])
+        local_dir = self.local_root / rel_dir
+        if local_dir.exists():
+            return sorted([f.name for f in local_dir.glob("*.csv")])
+        return []
+
+    def get_stock_data(self, filename: str) -> pd.DataFrame:
+        safe = filename if filename.endswith(".csv") else f"{filename}.csv"
+        return self._read(f"{PATHS['stock_data_dir']}/{safe}", ["Date", "Open", "High", "Low", "Close", "Volume"])
+
+    def save_stock_data(self, filename: str, data: pd.DataFrame) -> None:
+        safe = filename if filename.endswith(".csv") else f"{filename}.csv"
+        self._save(f"{PATHS['stock_data_dir']}/{safe}", data, f"Update stock data {safe}")
+
+    def list_analysis_files(self) -> list[str]:
+        rel_dir = PATHS["data_analysis_dir"]
+        if self._use_supabase():
+            files = self.supabase.list_paths(rel_dir + "/")
+            if files:
+                return sorted([Path(p).name for p in files])
+        local_dir = self.local_root / rel_dir
+        if local_dir.exists():
+            return sorted([f.name for f in local_dir.glob("*.csv")])
+        return []
+
+    def get_analysis_data(self, filename: str) -> pd.DataFrame:
+        safe = filename if filename.endswith(".csv") else f"{filename}.csv"
+        return self._read(f"{PATHS['data_analysis_dir']}/{safe}", [])
+
+    def save_analysis_data(self, filename: str, data: pd.DataFrame) -> None:
+        safe = filename if filename.endswith(".csv") else f"{filename}.csv"
+        self._save(f"{PATHS['data_analysis_dir']}/{safe}", data, f"Update analysis data {safe}")
+
+================================================================================
+
+PROGRAM: Services/app/terminal_ui.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+from datetime import datetime
+
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
+from Services.app.storage import DataStorage
+from Services.app.services import drawdown_stats, medium_exposure, portfolio_var_95, recommended_position_size, sector_exposure
+from Services.scrape import get_market_data
+
+
+def _now_np() -> str:
+    return (datetime.utcnow() + pd.Timedelta(hours=5, minutes=45)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _compute_integrated_metrics(ledger_df: pd.DataFrame, holdings_df: pd.DataFrame, cache_df: pd.DataFrame, history_df: pd.DataFrame) -> dict:
+    data = holdings_df.copy()
+    if data.empty:
+        return {"invested": 0.0, "market": 0.0, "unrealized": 0.0, "realized": 0.0}
+
+    cache_view = cache_df[["Symbol", "LTP"]] if (not cache_df.empty and "Symbol" in cache_df.columns and "LTP" in cache_df.columns) else pd.DataFrame(columns=["Symbol", "LTP"])
+    data = pd.merge(data, cache_view, on="Symbol", how="left", suffixes=("", "_cache"))
+    data["LTP"] = pd.to_numeric(data.get("LTP_cache", data.get("LTP", 0)), errors="coerce").fillna(pd.to_numeric(data.get("LTP", 0), errors="coerce").fillna(0))
+
+    payables = ledger_df[ledger_df["Category"] == "PAYABLE"]["Amount"].sum() if not ledger_df.empty else 0.0
+    receivables = ledger_df[ledger_df["Category"] == "RECEIVABLE"]["Amount"].sum() if not ledger_df.empty else 0.0
+    invested = max(float(payables - receivables), 0.0)
+
+    market = float((pd.to_numeric(data["Total_Qty"], errors="coerce").fillna(0) * pd.to_numeric(data["LTP"], errors="coerce").fillna(0)).sum())
+    unrealized = market - invested
+    realized = float(history_df["Net_PL"].sum()) if (not history_df.empty and "Net_PL" in history_df.columns) else 0.0
+    return {"invested": invested, "market": market, "unrealized": unrealized, "realized": realized}
+
+
+def _log_activity(storage: DataStorage, category: str, symbol: str, action: str, details: str, amount: float = 0.0) -> None:
+    log_df = storage.get_terminal_data("activity_log")
+    new_row = pd.DataFrame(
+        [
+            {
+                "Timestamp": _now_np(),
+                "Category": category,
+                "Symbol": symbol,
+                "Action": action,
+                "Details": details,
+                "Amount": amount,
+            }
+        ]
+    )
+    out_df = pd.concat([new_row, log_df], ignore_index=True)
+    storage.save_terminal_data("activity_log", out_df)
+
+
+def _sync_market_cache(storage: DataStorage, holdings_df: pd.DataFrame, watchlist_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    symbols = set(holdings_df["Symbol"].dropna().astype(str).str.upper().tolist())
+    symbols.update(watchlist_df["Symbol"].dropna().astype(str).str.upper().tolist() if not watchlist_df.empty else [])
+    symbols = {s for s in symbols if s}
+
+    if not symbols:
+        return storage.get_terminal_data("cache"), storage.get_terminal_data("price_log")
+
+    market_data = get_market_data(sorted(symbols))
+    now = _now_np()
+
+    cache_rows = []
+    price_entries = []
+    for sym in sorted(symbols):
+        info = market_data.get(sym, {"price": 0.0, "change": 0.0, "high": 0.0, "low": 0.0})
+        cache_rows.append(
+            {
+                "Symbol": sym,
+                "LTP": float(info.get("price", 0.0) or 0.0),
+                "Change": float(info.get("change", 0.0) or 0.0),
+                "High52": float(info.get("high", 0.0) or 0.0),
+                "Low52": float(info.get("low", 0.0) or 0.0),
+                "LastUpdated": now,
+            }
+        )
+        price_entries.append({"Date": now, "Symbol": sym, "LTP": float(info.get("price", 0.0) or 0.0)})
+
+    new_cache = pd.DataFrame(cache_rows)
+    old_log = storage.get_terminal_data("price_log")
+    out_log = pd.concat([old_log, pd.DataFrame(price_entries)], ignore_index=True)
+
+    storage.save_terminal_data("cache", new_cache)
+    storage.save_terminal_data("price_log", out_log)
+    _log_activity(storage, "SYSTEM", "MARKET", "SYNC", f"Synced {len(symbols)} symbols from Merolagani", 0.0)
+    return new_cache, out_log
+
+
+def _render_tms_hub(storage: DataStorage) -> None:
+    st.subheader("🧾 TMS Transaction Hub")
+    trx_df = storage.get_terminal_data("tms_trx")
+    t1, t2, t3, t4 = st.tabs(["Add", "View", "Manage", "Export"])
+
+    with t1:
+        with st.form("tms_trx_add"):
+            c1, c2, c3, c4 = st.columns(4)
+            dt = c1.date_input("Date")
+            stock = c2.text_input("Stock").upper().strip()
+            ttype = c3.selectbox("Type", ["DEPOSIT", "WITHDRAW", "BUY", "SELL", "FINE", "IPO"])
+            medium = c4.selectbox("Medium", ["Global", "Collateral", "Bank", "Other"])
+
+            c5, c6, c7 = st.columns(3)
+            amount = c5.number_input("Amount", step=1.0, value=0.0)
+            charge = c6.number_input("Charge", step=1.0, value=0.0)
+            reference = c7.text_input("Reference")
+            remark = st.text_input("Remark")
+
+            if st.form_submit_button("Save TMS Transaction"):
+                final_amount = amount if ttype in {"DEPOSIT", "SELL"} else -abs(amount)
+                row = pd.DataFrame([
+                    {
+                        "Date": dt,
+                        "Stock": stock,
+                        "Type": ttype,
+                        "Medium": medium,
+                        "Amount": final_amount,
+                        "Charge": charge,
+                        "Remark": remark,
+                        "Reference": reference,
+                    }
+                ])
+                out = pd.concat([trx_df, row], ignore_index=True)
+                storage.save_terminal_data("tms_trx", out)
+                _log_activity(storage, "TMS", stock or "N/A", "ADD", f"Recorded {ttype} via {medium}", final_amount)
+                st.success("Saved TMS transaction")
+                st.rerun()
+
+    with t2:
+        if trx_df.empty:
+            st.info("No TMS transactions yet.")
+        else:
+            view = trx_df.copy()
+            view["Date"] = pd.to_datetime(view["Date"], errors="coerce")
+            view = view.sort_values("Date")
+            view["Net_Balance"] = pd.to_numeric(view["Amount"], errors="coerce").fillna(0).cumsum()
+
+            def _trx_color(row):
+                t = str(row.get("Type", "")).upper()
+                if "DEPOSIT" in t:
+                    return ["background-color:#e8f7ee"] * len(row)
+                if "SELL" in t:
+                    return ["background-color:#eaf2ff"] * len(row)
+                if "BUY" in t or "WITHDRAW" in t or "FINE" in t:
+                    return ["background-color:#fdecec"] * len(row)
+                return [""] * len(row)
+
+            styled = view.style.apply(_trx_color, axis=1).format({"Amount": "{:.2f}", "Charge": "{:.2f}", "Net_Balance": "{:.2f}"})
+            st.dataframe(styled, width="stretch", height=350)
+
+    with t3:
+        edited = st.data_editor(trx_df, width="stretch", num_rows="dynamic")
+        if st.button("Force Save TMS Edits"):
+            storage.save_terminal_data("tms_trx", edited)
+            _log_activity(storage, "TMS", "SYSTEM", "FORCE_EDIT", "Edited raw tms/tms_trx.csv", 0.0)
+            st.success("Saved")
+
+    with t4:
+        if not trx_df.empty:
+            st.download_button(
+                "Download TMS Ledger CSV",
+                trx_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"TMS_Trx_Ledger_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+            )
+
+
+def render_terminal_hub(storage: DataStorage, ledger_df: pd.DataFrame, holdings_df: pd.DataFrame) -> None:
+    st.header("🖥️ NEPSE Terminal Hub")
+    st.caption("Absorbed from Nepse_Terminal and integrated with your ledger + holdings.")
+
+    portfolio_df = storage.get_terminal_data("portfolio")
+    watchlist_df = storage.get_terminal_data("watchlist")
+    history_df = storage.get_terminal_data("history")
+    diary_df = storage.get_terminal_data("diary")
+    cache_df = storage.get_terminal_data("cache")
+    activity_df = storage.get_terminal_data("activity_log")
+    wealth_df = storage.get_terminal_data("wealth")
+
+    top1, top2 = st.columns([3, 1])
+    with top2:
+        if st.button("⚡ Sync Live Market Cache", type="primary"):
+            with st.spinner("Syncing market data..."):
+                cache_df, _ = _sync_market_cache(storage, holdings_df, watchlist_df)
+            st.success("Market cache synced")
+
+    metrics = _compute_integrated_metrics(ledger_df, holdings_df, cache_df, history_df)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Integrated Invested", f"Rs {metrics['invested']:,.2f}")
+    m2.metric("Integrated Market Value", f"Rs {metrics['market']:,.2f}")
+    m3.metric("Unrealized P/L", f"Rs {metrics['unrealized']:,.2f}")
+    m4.metric("Realized P/L", f"Rs {metrics['realized']:,.2f}")
+
+    tabs = st.tabs(["Portfolio", "Watchlist", "History", "Diary", "Cache", "Activity", "Wealth Curve", "TMS Hub", "Risk Engine"])
+
+    with tabs[0]:
+        edited = st.data_editor(portfolio_df, width="stretch", num_rows="dynamic")
+        if st.button("Save Portfolio"):
+            storage.save_terminal_data("portfolio", edited)
+            _log_activity(storage, "SYSTEM", "PORTFOLIO", "SAVE", "Portfolio updated", 0.0)
+            st.success("Portfolio saved")
+
+    with tabs[1]:
+        edited = st.data_editor(watchlist_df, width="stretch", num_rows="dynamic")
+        if st.button("Save Watchlist"):
+            storage.save_terminal_data("watchlist", edited)
+            _log_activity(storage, "SYSTEM", "WATCHLIST", "SAVE", "Watchlist updated", 0.0)
+            st.success("Watchlist saved")
+
+    with tabs[2]:
+        st.dataframe(history_df.sort_values("Date", ascending=False) if "Date" in history_df.columns else history_df, width="stretch")
+
+    with tabs[3]:
+        edited = st.data_editor(diary_df, width="stretch", num_rows="dynamic")
+        if st.button("Save Diary"):
+            storage.save_terminal_data("diary", edited)
+            _log_activity(storage, "NOTE", "DIARY", "SAVE", "Diary updated", 0.0)
+            st.success("Diary saved")
+
+    with tabs[4]:
+        edited = st.data_editor(cache_df, width="stretch", num_rows="dynamic")
+        if st.button("Save Cache"):
+            storage.save_terminal_data("cache", edited)
+            st.success("Cache saved")
+
+    with tabs[5]:
+        led = ledger_df[["Date", "Category", "Description", "Amount"]].copy() if not ledger_df.empty else pd.DataFrame(columns=["Date", "Category", "Description", "Amount"])
+        if not led.empty:
+            led["Timestamp"] = pd.to_datetime(led["Date"]).astype(str)
+            led["Action"] = "LEDGER"
+            led["Symbol"] = led["Description"].astype(str).str.split("|").str[0].str.strip()
+            led["Details"] = led["Description"]
+            led = led[["Timestamp", "Category", "Symbol", "Action", "Details", "Amount"]]
+
+        merged = pd.concat([activity_df, led], ignore_index=True) if not led.empty else activity_df
+        merged = merged.sort_values("Timestamp", ascending=False) if "Timestamp" in merged.columns else merged
+
+        def _act_color(row):
+            c = str(row.get("Category", "")).upper()
+            if c in {"SYSTEM"}:
+                return ["background-color:#eef3ff"] * len(row)
+            if c in {"TRADE", "TMS"}:
+                return ["background-color:#fff8e6"] * len(row)
+            if c in {"ALERT"}:
+                return ["background-color:#fdecec"] * len(row)
+            return [""] * len(row)
+
+        st.dataframe(merged.style.apply(_act_color, axis=1), width="stretch", height=420)
+
+        if st.button("Snapshot activity from ledger"):
+            storage.save_terminal_data("activity_log", merged)
+            st.success("Activity log synced")
+
+    with tabs[6]:
+        if wealth_df.empty:
+            wealth_df = pd.DataFrame(columns=["Date", "Total_Investment", "Current_Value", "Total_PL", "Day_Change", "Sold_Volume"])
+
+        today = _now_np().split(" ")[0]
+        new_row = pd.DataFrame([
+            {
+                "Date": today,
+                "Total_Investment": round(metrics["invested"], 2),
+                "Current_Value": round(metrics["market"], 2),
+                "Total_PL": round(metrics["unrealized"] + metrics["realized"], 2),
+                "Day_Change": 0.0,
+                "Sold_Volume": float(history_df["Received_Amount"].sum()) if (not history_df.empty and "Received_Amount" in history_df.columns) else 0.0,
+            }
+        ])
+        wealth_df = wealth_df[wealth_df["Date"] != today] if "Date" in wealth_df.columns else wealth_df
+        wealth_df = pd.concat([wealth_df, new_row], ignore_index=True)
+
+        c1, c2 = st.columns([1, 2])
+        if c1.button("Update Wealth Snapshot"):
+            storage.save_terminal_data("wealth", wealth_df)
+            _log_activity(storage, "SYSTEM", "WEALTH", "SNAPSHOT", "Updated wealth snapshot", 0.0)
+            st.success("Wealth snapshot saved")
+
+        if not wealth_df.empty:
+            plot_df = wealth_df.copy()
+            plot_df["Date"] = pd.to_datetime(plot_df["Date"], errors="coerce")
+            c2.plotly_chart(px.line(plot_df.sort_values("Date"), x="Date", y="Total_PL", markers=True, title="Total P/L Trajectory"), width="stretch")
+            st.dataframe(plot_df.sort_values("Date", ascending=False), width="stretch")
+
+    with tabs[7]:
+        _render_tms_hub(storage)
+
+    with tabs[8]:
+        st.subheader("🛡️ Portfolio Risk Engine")
+        trx_df = storage.get_terminal_data("tms_trx")
+        med = medium_exposure(trx_df)
+        sec = sector_exposure(portfolio_df)
+
+        c1, c2, c3 = st.columns(3)
+        capital = c1.number_input("Risk Capital", min_value=0.0, value=100000.0, step=1000.0, key="risk_capital")
+        entry = c2.number_input("Entry Price", min_value=0.0, value=100.0, step=0.1, key="risk_entry")
+        stop = c3.number_input("Stop Price", min_value=0.0, value=95.0, step=0.1, key="risk_stop")
+        risk_pct = st.slider("Risk per Trade %", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
+        qty = recommended_position_size(capital, risk_pct, entry, stop)
+        st.metric("Suggested Position Size", f"{qty:,.2f} units")
+
+        wealth_curve = pd.to_numeric(wealth_df.get("Total_PL", pd.Series(dtype=float)), errors="coerce")
+        dd = drawdown_stats(wealth_curve)
+        if not cache_df.empty and "LTP" in cache_df.columns:
+            var95 = portfolio_var_95(pd.to_numeric(cache_df["LTP"], errors="coerce"), max(metrics["market"], 0.0))
+        else:
+            var95 = 0.0
+
+        r1, r2 = st.columns(2)
+        r1.metric("Current Drawdown %", f"{dd['current_drawdown_pct']:.2f}%")
+        r2.metric("Max Drawdown %", f"{dd['max_drawdown_pct']:.2f}%")
+        st.metric("Parametric VaR(95)", f"Rs {var95:,.2f}")
+
+        c_med, c_sec = st.columns(2)
+        c_med.dataframe(med, width="stretch")
+        c_sec.dataframe(sec, width="stretch")
+
+================================================================================
+
+PROGRAM: Services/app/market_predictor.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+from plotly.subplots import make_subplots
+
+from Services.app.storage import DataStorage
+
+
+@dataclass
+class SignalResult:
+    poc_price: float
+    latest_close: float
+    vpvr_signal: str
+    fvg_signal: str
+    wyckoff_signal: str
+
+
+def _prepare_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    req = ["Date", "Open", "High", "Low", "Close", "Volume"]
+    work = df.copy()
+    for col in req:
+        if col not in work.columns:
+            work[col] = 0
+    work["Date"] = pd.to_datetime(work["Date"], errors="coerce")
+    for col in ["Open", "High", "Low", "Close", "Volume"]:
+        work[col] = pd.to_numeric(work[col], errors="coerce").fillna(0)
+    work = work.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+    return work
+
+
+def _vpvr(df: pd.DataFrame, bins: int = 20) -> tuple[pd.DataFrame, float]:
+    prices = df["Close"].fillna(0)
+    vols = df["Volume"].fillna(0)
+    edges = np.linspace(prices.min(), prices.max(), bins + 1)
+    if np.isclose(edges[0], edges[-1]):
+        edges[-1] = edges[-1] + 1
+    categories = pd.cut(prices, bins=edges, include_lowest=True)
+    grouped = (
+        pd.DataFrame({"bin": categories, "Volume": vols})
+        .groupby("bin", observed=False)["Volume"]
+        .sum()
+        .reset_index()
+    )
+    grouped["Price"] = grouped["bin"].apply(lambda x: float(x.mid) if pd.notnull(x) else 0.0)
+    poc_idx = grouped["Volume"].idxmax()
+    poc = float(grouped.loc[poc_idx, "Price"]) if len(grouped) else 0.0
+    grouped["Color"] = np.where(grouped.index == poc_idx, "#FFD700", "#5DADE2")
+    return grouped, poc
+
+
+def _detect_fvg(df: pd.DataFrame) -> tuple[list[dict], list[dict]]:
+    bullish: list[dict] = []
+    bearish: list[dict] = []
+    if len(df) < 3:
+        return bullish, bearish
+
+    for i in range(2, len(df)):
+        c1 = df.iloc[i - 2]
+        c3 = df.iloc[i]
+        if float(c3["Low"]) > float(c1["High"]):
+            bullish.append(
+                {
+                    "x0": c1["Date"],
+                    "x1": c3["Date"],
+                    "y0": float(c1["High"]),
+                    "y1": float(c3["Low"]),
+                }
+            )
+        if float(c3["High"]) < float(c1["Low"]):
+            bearish.append(
+                {
+                    "x0": c1["Date"],
+                    "x1": c3["Date"],
+                    "y0": float(c3["High"]),
+                    "y1": float(c1["Low"]),
+                }
+            )
+    return bullish, bearish
+
+
+def _signal_engine(df: pd.DataFrame, poc: float, bull_fvg: list[dict], bear_fvg: list[dict]) -> SignalResult:
+    latest = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else latest
+    close = float(latest["Close"])
+    prev_close = float(prev["Close"])
+    open_ = float(latest["Open"])
+
+    if poc > 0 and abs(close - poc) / poc <= 0.02 and close > prev_close:
+        vpvr = "🟢 BUY: Price at/near POC support with bounce"
+    elif poc > 0 and close < poc * 0.97:
+        vpvr = "🔴 SELL: Price broke >3% below POC"
+    else:
+        vpvr = "🟡 NEUTRAL: No POC trigger"
+
+    bull_hit = any(f["y0"] <= close <= f["y1"] for f in bull_fvg)
+    bear_hit = any(f["y0"] <= close <= f["y1"] for f in bear_fvg)
+    green_candle = close > open_
+    red_candle = close < open_
+
+    if bull_hit and green_candle:
+        fvg_signal = "🟢 BUY: Price reacted inside Bullish FVG"
+    elif bear_hit and red_candle:
+        fvg_signal = "🔴 DUMP: Price rejected inside Bearish FVG"
+    else:
+        fvg_signal = "🟡 NEUTRAL: No FVG trigger"
+
+    work = df.copy()
+    work["SMA200"] = work["Close"].rolling(200).mean()
+    work["STD20"] = work["Close"].rolling(20).std()
+    std_series = work["STD20"].dropna()
+    std_thresh = float(std_series.quantile(0.10)) if not std_series.empty else 0.0
+    curr_std = float(work["STD20"].iloc[-1]) if not work["STD20"].isna().all() else 0.0
+    sma200 = float(work["SMA200"].iloc[-1]) if not work["SMA200"].isna().all() else 0.0
+    near_sma = sma200 > 0 and abs(close - sma200) / sma200 <= 0.05
+
+    if curr_std > 0 and curr_std <= std_thresh and near_sma:
+        wyckoff = "🟢 STRONG BUY: Wyckoff Spring Alert — accumulation detected"
+    else:
+        wyckoff = "🔴 WAIT: Accumulation phase not fully confirmed"
+
+    return SignalResult(
+        poc_price=poc,
+        latest_close=close,
+        vpvr_signal=vpvr,
+        fvg_signal=fvg_signal,
+        wyckoff_signal=wyckoff,
+    )
+
+
+def _build_chart(df: pd.DataFrame, vpvr_df: pd.DataFrame, poc: float, bull_fvg: list[dict], bear_fvg: list[dict]) -> go.Figure:
+    work = df.copy()
+    work["SMA200"] = work["Close"].rolling(200).mean()
+
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        shared_yaxes=True,
+        column_widths=[0.78, 0.22],
+        horizontal_spacing=0.02,
+        specs=[[{"type": "xy"}, {"type": "xy"}]],
+    )
+
+    fig.add_trace(
+        go.Candlestick(
+            x=work["Date"],
+            open=work["Open"],
+            high=work["High"],
+            low=work["Low"],
+            close=work["Close"],
+            name="Price",
+        ),
+        row=1,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Scatter(x=work["Date"], y=work["SMA200"], mode="lines", name="SMA200", line=dict(color="#f39c12", width=2)),
+        row=1,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Bar(
+            x=vpvr_df["Volume"],
+            y=vpvr_df["Price"],
+            orientation="h",
+            marker_color=vpvr_df["Color"],
+            name="VPVR",
+            showlegend=True,
+        ),
+        row=1,
+        col=2,
+    )
+
+    if poc > 0:
+        fig.add_hline(y=poc, line_dash="dot", line_color="#FFD700", annotation_text="POC", row=1, col=1)
+
+    max_date = work["Date"].max() + timedelta(days=30)
+    for zone in bull_fvg:
+        fig.add_shape(
+            type="rect",
+            x0=zone["x0"],
+            x1=max_date,
+            y0=zone["y0"],
+            y1=zone["y1"],
+            xref="x",
+            yref="y",
+            fillcolor="rgba(46, 204, 113, 0.2)",
+            line=dict(color="rgba(46, 204, 113, 0.4)", width=1),
+        )
+
+    for zone in bear_fvg:
+        fig.add_shape(
+            type="rect",
+            x0=zone["x0"],
+            x1=max_date,
+            y0=zone["y0"],
+            y1=zone["y1"],
+            xref="x",
+            yref="y",
+            fillcolor="rgba(231, 76, 60, 0.2)",
+            line=dict(color="rgba(231, 76, 60, 0.4)", width=1),
+        )
+
+    fig.update_layout(height=700, title="Automated Quantitative Scanner", xaxis_rangeslider_visible=False)
+    fig.update_xaxes(title_text="Date", row=1, col=1)
+    fig.update_yaxes(title_text="Price", row=1, col=1)
+    fig.update_xaxes(title_text="Volume Profile", row=1, col=2)
+    return fig
+
+
+def render_market_predictor_tab(storage: DataStorage) -> None:
+    st.subheader("🔮 Market Predictor — VPVR + FVG + Wyckoff")
+    stock_files = storage.list_stock_data_files()
+    if not stock_files:
+        st.warning("No stock CSV files found in Data/Market_Data/Stock_Data/")
+        return
+
+    selected = st.selectbox("Select Stock Dataset", stock_files, key="market_predictor_stock")
+
+    try:
+        raw = storage.get_stock_data(selected)
+        df = _prepare_ohlcv(raw)
+        if len(df) < 30:
+            st.warning("Need at least 30 rows of OHLCV data.")
+            return
+
+        vpvr_df, poc = _vpvr(df, bins=20)
+        bull_fvg, bear_fvg = _detect_fvg(df)
+        result = _signal_engine(df, poc, bull_fvg, bear_fvg)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Current Price", f"Rs {result.latest_close:,.2f}")
+        c2.metric("POC Level", f"Rs {result.poc_price:,.2f}")
+        active = " | ".join([result.vpvr_signal, result.fvg_signal, result.wyckoff_signal])
+        c3.metric("Active Signals", "3 Models Ready")
+
+        st.info(active)
+
+        fig = _build_chart(df, vpvr_df, poc, bull_fvg, bear_fvg)
+        st.plotly_chart(fig, width="stretch")
+
+        with st.expander("📋 Signal Breakdown"):
+            st.write("- VPVR:", result.vpvr_signal)
+            st.write("- FVG:", result.fvg_signal)
+            st.write("- Wyckoff:", result.wyckoff_signal)
+            st.write(f"Detected Bullish FVG zones: {len(bull_fvg)}")
+            st.write(f"Detected Bearish FVG zones: {len(bear_fvg)}")
+
+    except Exception as e:
+        st.error(f"Market predictor failed: {e}")
+
+================================================================================
+
+PROGRAM: Services/app/__init__.py
+--------------------------------------------------------------------------------
+"""Modular NEPSE TMS Ledger app package."""
+
+================================================================================
+
+PROGRAM: Services/app/logic.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+
+import pandas as pd
+
+
+@dataclass
+class LedgerSummary:
+    net_cash_invested: float = 0.0
+    tms_cash_balance: float = 0.0
+    trading_power: float = 0.0
+    utilization_rate: float = 0.0
+    payable_due: float = 0.0
+    receivable_due: float = 0.0
+    net_due: float = 0.0
+    t0_due: float = 0.0
+    t1_due: float = 0.0
+    t2_due: float = 0.0
+    pending_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+
+
+def fiscal_year_for_nepal(date_obj: date) -> str:
+    return f"{date_obj.year}/{date_obj.year+1}" if date_obj.month >= 7 else f"{date_obj.year-1}/{date_obj.year}"
+
+
+def calc_net_flow(frame: pd.DataFrame) -> float:
+    return frame[frame["Category"] == "RECEIVABLE"]["Amount"].sum() - frame[frame["Category"] == "PAYABLE"]["Amount"].sum()
+
+
+def summarize_ledger(df: pd.DataFrame, holdings_df: pd.DataFrame, today: date) -> LedgerSummary:
+    s = LedgerSummary()
+    if df.empty:
+        return s
+
+    money_out = df[(df["Category"].isin(["DEPOSIT", "DIRECT_PAY", "PRIMARY_INVEST", "EXPENSE"])) & (df["Is_Non_Cash"] == False)]["Amount"].sum()
+    money_in = df[df["Category"] == "WITHDRAW"]["Amount"].sum()
+    s.net_cash_invested = float(money_out - money_in)
+
+    tms_credits = df[df["Category"].isin(["DEPOSIT", "RECEIVABLE", "DIRECT_PAY"])]["Amount"].sum()
+    tms_debits = df[df["Category"].isin(["WITHDRAW", "PAYABLE", "EXPENSE"])]["Amount"].sum()
+    s.tms_cash_balance = float(tms_credits - tms_debits)
+
+    non_cash_value = 0.0
+    if not holdings_df.empty:
+        h = holdings_df.copy()
+        h["Collateral_Val"] = h["Pledged_Qty"] * h["LTP"] * (1 - (h["Haircut"] / 100))
+        non_cash_value = h["Collateral_Val"].sum()
+    s.trading_power = float(s.tms_cash_balance + non_cash_value)
+
+    used_collateral = abs(s.tms_cash_balance) if s.tms_cash_balance < 0 else 0
+    s.utilization_rate = float((used_collateral / non_cash_value * 100) if non_cash_value > 0 else 0)
+
+    pending_df = df[df["Status"].astype(str).str.lower() == "pending"].copy()
+    s.pending_df = pending_df
+    s.payable_due = float(pending_df[pending_df["Category"] == "PAYABLE"]["Amount"].sum())
+    s.receivable_due = float(pending_df[pending_df["Category"] == "RECEIVABLE"]["Amount"].sum())
+    s.net_due = float(s.payable_due - s.receivable_due)
+
+    if not pending_df.empty:
+        pending_df["Due_Date"] = pd.to_datetime(pending_df["Due_Date"]).dt.date
+        s.t0_due = calc_net_flow(pending_df[pending_df["Due_Date"] <= today])
+        s.t1_due = calc_net_flow(pending_df[pending_df["Due_Date"] == today + timedelta(days=1)])
+        s.t2_due = calc_net_flow(pending_df[pending_df["Due_Date"] >= today + timedelta(days=2)])
+    return s
+
+================================================================================
+
+PROGRAM: Services/app/logger.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from pathlib import Path
+
+
+def log_event(event: str, payload: dict, log_path: str = "logs/app_events.jsonl") -> None:
+    path = Path(log_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "event": event,
+        "payload": payload,
+    }
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+================================================================================
+
+PROGRAM: Services/app/config.py
+--------------------------------------------------------------------------------
+from dataclasses import dataclass
+
+import streamlit as st
+
+from Services.app.supabase_store import SupabaseConfig
+
+
+@dataclass
+class AuthConfig:
+    username: str
+    password: str
+
+
+@dataclass
+class StorageConfig:
+    backend: str = "supabase"  # supabase | csv | sqlite
+    sqlite_path: str = "data/terminal.db"
+
+
+def load_auth_config() -> AuthConfig | None:
+    try:
+        if "auth" in st.secrets:
+            return AuthConfig(
+                username=st.secrets["auth"]["username"],
+                password=st.secrets["auth"]["password"],
+            )
+        return AuthConfig(
+            username=st.secrets["app_username"],
+            password=st.secrets["app_password"],
+        )
+    except Exception:
+        return None
+
+
+def load_supabase_config() -> SupabaseConfig | None:
+    try:
+        cfg = st.secrets.get("supabase", {})
+        key = cfg.get("service_key") or cfg.get("service_role_key") or cfg.get("key")
+        if not cfg.get("url") or not key:
+            return None
+        return SupabaseConfig(
+            url=str(cfg["url"]),
+            key=str(key),
+            table=str(cfg.get('table') or 'app_Files'),
+        )
+    except Exception:
+        return None
+
+
+def load_github_config() -> dict[str, str] | None:
+    try:
+        cfg = st.secrets.get("github", {})
+        return {"token": str(cfg["token"]), "repo_name": str(cfg["repo_name"])}
+    except Exception:
+        return None
+
+
+def load_storage_config() -> StorageConfig:
+    try:
+        cfg = st.secrets.get("storage", {})
+        return StorageConfig(
+            backend=str(cfg.get("backend", "supabase")).lower(),
+            sqlite_path=str(cfg.get("sqlite_path", "data/terminal.db")),
+        )
+    except Exception:
+        return StorageConfig()
+
+================================================================================
+
+PROGRAM: Services/app/transactions.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, timedelta
+
+import pandas as pd
+
+from Services.app.logic import fiscal_year_for_nepal
+from Services.app.storage import HOLDINGS_COLUMNS, LEDGER_COLUMNS
+
+
+@dataclass
+class SmartTransaction:
+    txn_date: date
+    mode: str
+    symbol: str
+    qty: float
+    price: float
+    amount: float
+    status: str
+    ref_id: str
+    description: str
+    due_days: int = 2
+
+
+def _safe_symbol(symbol: str) -> str:
+    return (symbol or "").upper().strip()
+
+
+def smart_to_ledger_row(txn: SmartTransaction) -> dict:
+    symbol = _safe_symbol(txn.symbol)
+    desc_symbol = f"{symbol} | " if symbol else ""
+
+    type_map = {
+        "DEPOSIT": "Load Collateral (Deposit)",
+        "WITHDRAW": "Refund Request (Withdraw)",
+        "BUY": "Buy Shares (Payable)",
+        "SELL": "Sell Shares (Receivable)",
+        "EXPENSE": "Expense",
+        "DIRECT_PAY": "Direct Payment",
+        "PRIMARY_INVEST": "Primary Investment",
+    }
+    category_map = {
+        "DEPOSIT": "DEPOSIT",
+        "WITHDRAW": "WITHDRAW",
+        "BUY": "PAYABLE",
+        "SELL": "RECEIVABLE",
+        "EXPENSE": "EXPENSE",
+        "DIRECT_PAY": "DIRECT_PAY",
+        "PRIMARY_INVEST": "PRIMARY_INVEST",
+    }
+    amount = txn.amount if txn.mode in {"DEPOSIT", "WITHDRAW", "EXPENSE", "DIRECT_PAY", "PRIMARY_INVEST"} else txn.qty * txn.price
+
+    return {
+        "Date": txn.txn_date,
+        "Type": type_map[txn.mode],
+        "Category": category_map[txn.mode],
+        "Amount": float(round(abs(amount), 2)),
+        "Status": txn.status,
+        "Due_Date": txn.txn_date + timedelta(days=max(txn.due_days, 0)),
+        "Ref_ID": txn.ref_id,
+        "Description": f"{desc_symbol}{txn.description}".strip(),
+        "Is_Non_Cash": False,
+        "Dispute_Note": "",
+        "Fiscal_Year": fiscal_year_for_nepal(txn.txn_date),
+    }
+
+
+def apply_smart_transaction(
+    ledger_df: pd.DataFrame,
+    holdings_df: pd.DataFrame,
+    txn: SmartTransaction,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    ledger_row = smart_to_ledger_row(txn)
+    out_ledger = pd.concat([ledger_df, pd.DataFrame([ledger_row])], ignore_index=True)
+    for col in LEDGER_COLUMNS:
+        if col not in out_ledger.columns:
+            out_ledger[col] = ""
+    out_ledger = out_ledger[LEDGER_COLUMNS]
+
+    out_holdings = holdings_df.copy()
+    if out_holdings.empty:
+        out_holdings = pd.DataFrame(columns=HOLDINGS_COLUMNS)
+
+    mode = txn.mode
+    symbol = _safe_symbol(txn.symbol)
+    qty = float(txn.qty)
+    if symbol and mode in {"BUY", "SELL"} and qty > 0:
+        if symbol not in out_holdings["Symbol"].values:
+            out_holdings = pd.concat(
+                [
+                    out_holdings,
+                    pd.DataFrame(
+                        [{"Symbol": symbol, "Total_Qty": 0.0, "Pledged_Qty": 0.0, "LTP": float(txn.price), "Haircut": 25.0}]
+                    ),
+                ],
+                ignore_index=True,
+            )
+
+        idx = out_holdings[out_holdings["Symbol"] == symbol].index[0]
+        current_total = float(out_holdings.at[idx, "Total_Qty"])
+        delta = qty if mode == "BUY" else -qty
+        new_total = max(0.0, current_total + delta)
+        out_holdings.at[idx, "Total_Qty"] = new_total
+        pledged_now = float(out_holdings.at[idx, "Pledged_Qty"])
+        out_holdings.at[idx, "Pledged_Qty"] = min(new_total, pledged_now if pledged_now > 0 else new_total)
+        if txn.price > 0:
+            out_holdings.at[idx, "LTP"] = float(txn.price)
+
+    for col in HOLDINGS_COLUMNS:
+        if col not in out_holdings.columns:
+            out_holdings[col] = 0.0 if col != "Symbol" else ""
+    return out_ledger, out_holdings[HOLDINGS_COLUMNS]
+
+================================================================================
+
+PROGRAM: Services/app/supabase_store.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from io import StringIO
+from typing import Any
+
+import pandas as pd
+import requests
+
+
+@dataclass
+class SupabaseConfig:
+    url: str
+    key: str
+    table: str = "app_Files"
+
+
+class SupabaseFileStore:
+    def __init__(self, config: SupabaseConfig | None, retry_count: int = 3, retry_backoff_s: float = 0.4):
+        self.config = config
+        self.retry_count = max(1, retry_count)
+        self.retry_backoff_s = max(0.0, retry_backoff_s)
+
+    def enabled(self) -> bool:
+        return bool(self.config and self.config.url and self.config.key)
+
+    def _headers(self) -> dict[str, str]:
+        assert self.config is not None
+
+        # Resilient Header Injection: Check if key is present and not empty
+        if not self.config.key or not str(self.config.key).strip():
+            print("CRITICAL WARNING: Supabase API key is missing or empty in _headers!")
+
+        return {
+            "apikey": self.config.key,
+            "Authorization": f"Bearer {self.config.key}",
+            "Content-Type": "application/json",
+        }
+
+    def _endpoint(self) -> str:
+        assert self.config is not None
+        url = f"{self.config.url.rstrip('/')}/rest/v1/{self.config.table}"
+        print(f"DEBUG: Supabase Endpoint -> {url}")
+        return url
+
+    def _with_retry(self, fn):
+        err: Exception | None = None
+        for i in range(self.retry_count):
+            try:
+                return fn()
+            except Exception as ex:  # network/transient/server
+                err = ex
+                if i < self.retry_count - 1:
+                    time.sleep(self.retry_backoff_s * (2**i))
+        if err:
+            raise err
+        return None
+
+    def read_text(self, path: str) -> str | None:
+        if not self.enabled():
+            return None
+
+        def _op():
+            resp = requests.get(
+                self._endpoint(),
+                headers=self._headers(),
+                params={"select": "content", "path": f"eq.{path}", "limit": 1},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            rows: list[dict[str, Any]] = resp.json() or []
+            return rows[0].get("content") if rows else None
+
+        try:
+            return self._with_retry(_op)
+        except Exception:
+            return None
+
+    def write_text(self, path: str, content: str) -> None:
+        if not self.enabled():
+            raise RuntimeError("Supabase is not configured")
+
+        def _op():
+            payload = [{"path": path, "content": content}]
+            requests.post(
+                self._endpoint(),
+                headers={**self._headers(), "Prefer": "resolution=merge-duplicates"},
+                params={"on_conflict": "path"},
+                json=payload,
+                timeout=20,
+            ).raise_for_status()
+
+        self._with_retry(_op)
+
+    def list_paths(self, prefix: str) -> list[str]:
+        if not self.enabled():
+            return []
+
+        def _op():
+            resp = requests.get(
+                self._endpoint(),
+                headers=self._headers(),
+                params={"select": "path", "path": f"like.{prefix}%"},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            rows: list[dict[str, str]] = resp.json() or []
+            return sorted([r.get("path", "") for r in rows if r.get("path", "").endswith(".csv")])
+
+        try:
+            return self._with_retry(_op)
+        except Exception:
+            return []
+
+    def read_csv(self, path: str, columns: list[str]) -> pd.DataFrame:
+        text = self.read_text(path)
+        if not text:
+            return pd.DataFrame(columns=columns)
+        return pd.read_csv(StringIO(text))
+
+    def write_csv(self, path: str, data: pd.DataFrame) -> None:
+        self.write_text(path, data.to_csv(index=False))
+
+
+================================================================================
+
+PROGRAM: Services/app/services/signals.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+import pandas as pd
+
+from Services.app.market_predictor import _detect_fvg, _prepare_ohlcv, _signal_engine, _vpvr
+
+
+def run_all_signal_models(df: pd.DataFrame) -> dict:
+    work = _prepare_ohlcv(df)
+    vpvr_df, poc = _vpvr(work, bins=20)
+    bull, bear = _detect_fvg(work)
+    out = _signal_engine(work, poc, bull, bear)
+    return {
+        "poc": out.poc_price,
+        "latest_close": out.latest_close,
+        "vpvr_signal": out.vpvr_signal,
+        "fvg_signal": out.fvg_signal,
+        "wyckoff_signal": out.wyckoff_signal,
+        "bullish_fvg_count": len(bull),
+        "bearish_fvg_count": len(bear),
+        "vpvr_rows": len(vpvr_df),
+    }
+
+================================================================================
+
+PROGRAM: Services/app/services/__init__.py
+--------------------------------------------------------------------------------
+from Services.app.services.portfolio import medium_exposure, sector_exposure
+from Services.app.services.risk import drawdown_stats, portfolio_var_95, recommended_position_size
+from Services.app.services.signals import run_all_signal_models
+
+__all__ = [
+    "medium_exposure",
+    "sector_exposure",
+    "drawdown_stats",
+    "portfolio_var_95",
+    "recommended_position_size",
+    "run_all_signal_models",
+]
+
+================================================================================
+
+PROGRAM: Services/app/services/portfolio.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+import pandas as pd
+
+
+def medium_exposure(trx_df: pd.DataFrame) -> pd.DataFrame:
+    if trx_df.empty:
+        return pd.DataFrame(columns=["Medium", "Net_Amount"])
+    work = trx_df.copy()
+    work["Amount"] = pd.to_numeric(work.get("Amount", 0), errors="coerce").fillna(0)
+    return work.groupby("Medium", as_index=False)["Amount"].sum().rename(columns={"Amount": "Net_Amount"})
+
+
+def sector_exposure(portfolio_df: pd.DataFrame) -> pd.DataFrame:
+    if portfolio_df.empty:
+        return pd.DataFrame(columns=["Sector", "Units"])
+    work = portfolio_df.copy()
+    work["Units"] = pd.to_numeric(work.get("Units", 0), errors="coerce").fillna(0)
+    return work.groupby("Sector", as_index=False)["Units"].sum().sort_values("Units", ascending=False)
+
+================================================================================
+
+PROGRAM: Services/app/services/risk.py
+--------------------------------------------------------------------------------
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+
+def recommended_position_size(capital: float, risk_per_trade_pct: float, entry: float, stop: float) -> float:
+    if capital <= 0 or entry <= 0 or stop <= 0 or risk_per_trade_pct <= 0:
+        return 0.0
+    risk_budget = capital * (risk_per_trade_pct / 100)
+    per_share_risk = abs(entry - stop)
+    if per_share_risk == 0:
+        return 0.0
+    return max(risk_budget / per_share_risk, 0.0)
+
+
+def portfolio_var_95(price_series: pd.Series, position_value: float) -> float:
+    s = pd.to_numeric(price_series, errors="coerce").dropna()
+    if len(s) < 5 or position_value <= 0:
+        return 0.0
+    returns = s.pct_change().dropna()
+    if returns.empty:
+        return 0.0
+    z = 1.65
+    sigma = float(returns.std())
+    return float(abs(z * sigma * position_value))
+
+
+def drawdown_stats(equity_curve: pd.Series) -> dict:
+    s = pd.to_numeric(equity_curve, errors="coerce").dropna()
+    if s.empty:
+        return {"max_drawdown_pct": 0.0, "current_drawdown_pct": 0.0}
+    running_max = s.cummax()
+    dd = (s - running_max) / running_max.replace(0, np.nan)
+    return {
+        "max_drawdown_pct": float(dd.min() * 100),
+        "current_drawdown_pct": float(dd.iloc[-1] * 100),
+    }
+
+================================================================================
+
+PROGRAM: Services/app/domain/models.py
+--------------------------------------------------------------------------------
+from pydantic import BaseModel, Field, field_validator
+from datetime import date
+from typing import Optional, List
+
+class LedgerEntry(BaseModel):
+    Date: date
+    Type: str
+    Category: str
+    Amount: float
+    Status: str = "Cleared"
+    Due_Date: Optional[date] = None
+    Ref_ID: str = ""
+    Description: str = ""
+    Is_Non_Cash: bool = False
+    Dispute_Note: str = ""
+    Fiscal_Year: str
+
+    @field_validator('Fiscal_Year')
+    @classmethod
+    def validate_fiscal(cls, v):
+        if "/" not in str(v): return "2025/2026" # Default if broken
+        return v
+
+class HoldingEntry(BaseModel):
+    Symbol: str
+    Total_Qty: float = Field(ge=0)
+    Pledged_Qty: float = Field(default=0, ge=0)
+    LTP: float = Field(default=0, ge=0)
+    Haircut: float = Field(default=0, ge=0)
+
+    @field_validator('Symbol')
+    @classmethod
+    def upper_sym(cls, v): return v.upper()
+
+class TransactionEntry(BaseModel):
+    Date: date
+    Stock: str
+    Type: str
+    Medium: str
+    Amount: float
+    Charge: float = 0.0
+    Remark: str = ""
+    Reference: str = ""
+
+class ActivityLogEntry(BaseModel):
+    Timestamp: str
+    Category: str
+    Symbol: str
+    Action: str
+    Details: str
+    Amount: float
+
+================================================================================
+
+PROGRAM: Services/Stock_Graph/Graph.py
+--------------------------------------------------------------------------------
+from pathlib import Path
+import json
+
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+from plotly.subplots import make_subplots
+
+from Services.app.config import load_storage_config, load_supabase_config
+from Services.app.storage import DataStorage
+
+st.markdown("### 📈 Pro Interactive Stock Chart")
+storage = DataStorage(supabase_config=load_supabase_config(), local_root=Path('.'), storage_config=load_storage_config())
+
+with st.expander("📁 Data Management (Upload & Save)", expanded=False):
+    uploaded_file = st.file_uploader("Upload OHLCV Data (TXT/JSON)", type=["txt", "json"])
+
+    if uploaded_file is not None:
+        try:
+            raw_data = json.load(uploaded_file)
+            if raw_data.get("s") == "ok" and "t" in raw_data:
+                up_df = pd.DataFrame({
+                    "Date": pd.to_datetime(raw_data["t"], unit="s"),
+                    "Open": raw_data["o"],
+                    "High": raw_data["h"],
+                    "Low": raw_data["l"],
+                    "Close": raw_data["c"],
+                    "Volume": raw_data["v"],
+                })
+                st.success(f"✅ Loaded {len(up_df)} rows from file.")
+
+                c1, c2 = st.columns([3, 1])
+                stock_symbol = c1.text_input("Stock Symbol to Save/Merge (e.g., NABIL):").upper().strip()
+                if c2.button("💾 Save to Supabase", use_container_width=True):
+                    if stock_symbol:
+                        existing_df = storage.get_stock_data(stock_symbol)
+                        if not existing_df.empty:
+                            existing_df["Date"] = pd.to_datetime(existing_df["Date"], errors="coerce")
+                        combined_df = pd.concat([existing_df, up_df], ignore_index=True).drop_duplicates(subset=["Date"], keep="last").sort_values("Date")
+                        storage.save_stock_data(stock_symbol, combined_df)
+                        st.success(f"🎉 Merged and saved `{stock_symbol}.csv`!")
+                    else:
+                        st.error("Please enter a stock symbol.")
+            else:
+                st.error("Invalid TradingView JSON format.")
+        except Exception as e:
+            st.error(f"Error parsing file: {e}")
+
+st.write("---")
+saved_stocks = [f.replace(".csv", "") for f in storage.list_stock_data_files()]
+
+c_load, c_ind1, c_ind2 = st.columns([2, 1, 1])
+selected_stock = c_load.selectbox("Select Stock to Chart:", ["-- Select --"] + saved_stocks)
+show_sma = c_ind1.checkbox("Show Moving Averages", value=True)
+show_rsi = c_ind2.checkbox("Show RSI (14)", value=True)
+
+if selected_stock != "-- Select --":
+    df = storage.get_stock_data(selected_stock)
+    if df.empty:
+        st.warning("No data for selected stock.")
+    else:
+        df["Date"] = pd.to_datetime(df["Date"])
+        df = df.sort_values("Date").reset_index(drop=True)
+
+        df["SMA_20"] = df["Close"].rolling(window=20).mean()
+        df["SMA_50"] = df["Close"].rolling(window=50).mean()
+        df["Vol_SMA_30"] = df["Volume"].rolling(window=30).mean()
+        delta = df["Close"].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df["RSI_14"] = 100 - (100 / (1 + rs))
+
+        rows = 3 if show_rsi else 2
+        row_heights = [0.6, 0.2, 0.2] if show_rsi else [0.7, 0.3]
+        fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=row_heights)
+
+        fig.add_trace(go.Candlestick(x=df["Date"], open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price"), row=1, col=1)
+        if show_sma:
+            fig.add_trace(go.Scatter(x=df["Date"], y=df["SMA_20"], name="SMA 20"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df["Date"], y=df["SMA_50"], name="SMA 50"), row=1, col=1)
+
+        colors = ["#26a69a" if row["Close"] >= row["Open"] else "#ef5350" for _, row in df.iterrows()]
+        fig.add_trace(go.Bar(x=df["Date"], y=df["Volume"], marker_color=colors, name="Volume", opacity=0.8), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df["Date"], y=df["Vol_SMA_30"], name="Vol SMA 30"), row=2, col=1)
+
+        if show_rsi:
+            fig.add_trace(go.Scatter(x=df["Date"], y=df["RSI_14"], name="RSI 14"), row=3, col=1)
+            fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
+            fig.update_yaxes(range=[0, 100], row=3, col=1)
+
+        dt_breaks = pd.date_range(start=df["Date"].min(), end=df["Date"].max()).difference(df["Date"])
+        fig.update_xaxes(rangebreaks=[dict(values=dt_breaks)], rangeslider_visible=False)
+        fig.update_layout(height=800 if show_rsi else 650, template="plotly_dark", hovermode="x unified", margin=dict(l=10, r=10, t=40, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+
+================================================================================
+
+PROGRAM: Services/Stock_Graph/__init__.py
+--------------------------------------------------------------------------------
+
+
+================================================================================
+
+PROGRAM: Services/Stock_Graph/Elliot_Wave.py
+--------------------------------------------------------------------------------
+from pathlib import Path
+import datetime
+
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+from Services.app.config import load_storage_config, load_supabase_config
+from Services.app.storage import DataStorage
+
+st.markdown("### 🌊 Institutional Elliott Wave Engine")
+st.caption("Advanced EW analysis with replay mode.")
+storage = DataStorage(supabase_config=load_supabase_config(), local_root=Path('.'), storage_config=load_storage_config())
+
+
+def run_ew_analysis(df_full, replay_date, sensitivity, wave_type):
+    df = df_full[df_full["Date"].dt.date <= replay_date].copy().reset_index(drop=True)
+    future_df = df_full[df_full["Date"].dt.date > replay_date].copy()
+    if len(df) < 50:
+        st.error("Not enough data to analyze. Need at least 50 days.")
+        return
+
+    swings_high = df["High"].rolling(sensitivity, min_periods=1).max()
+    swings_low = df["Low"].rolling(sensitivity, min_periods=1).min()
+
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=df["Date"], open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price", opacity=0.8))
+    fig.add_trace(go.Scatter(x=df["Date"], y=swings_high, name="Swing High", line=dict(color="#2ecc71")))
+    fig.add_trace(go.Scatter(x=df["Date"], y=swings_low, name="Swing Low", line=dict(color="#e74c3c")))
+
+    if not future_df.empty:
+        fig.add_trace(go.Candlestick(x=future_df["Date"], open=future_df["Open"], high=future_df["High"], low=future_df["Low"], close=future_df["Close"], increasing_line_color='rgba(128,128,128,0.3)', decreasing_line_color='rgba(128,128,128,0.3)', name='Future (Replay)'))
+
+    fig.update_layout(height=650, template="plotly_dark", title=f"{wave_type} Structure")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+saved_stocks = [f.replace(".csv", "") for f in storage.list_stock_data_files()]
+if not saved_stocks:
+    st.info("No stock files available.")
+else:
+    c_stock, c_sens, c_mode = st.columns([2, 1, 1])
+    selected_stock = c_stock.selectbox("Select Stock:", saved_stocks)
+    sensitivity = c_sens.number_input("Degree (Sensitivity)", 2, 20, 4)
+    wave_type = c_mode.selectbox("Scan Mode:", ["Auto-Predict (Last 6 Months)", "Motive (1-2-3-4-5)", "Correction (A-B-C)"])
+
+    df_master = storage.get_stock_data(selected_stock)
+    if not df_master.empty:
+        df_master["Date"] = pd.to_datetime(df_master["Date"])
+        df_master = df_master[(df_master["High"] >= df_master["Low"]) & (df_master["High"] >= df_master["Close"])].sort_values("Date").reset_index(drop=True)
+
+        if wave_type == "Auto-Predict (Last 6 Months)":
+            df_master = df_master[df_master["Date"] >= df_master["Date"].max() - pd.DateOffset(months=6)].reset_index(drop=True)
+
+        tab_live, tab_replay = st.tabs(["🔴 Live Market Scanner", "⏪ Replay & Backtester Mode"])
+        with tab_live:
+            run_ew_analysis(df_master, df_master["Date"].max().date(), sensitivity, wave_type)
+
+        with tab_replay:
+            min_d = df_master["Date"].min().date()
+            max_d = df_master["Date"].max().date()
+            default_date = max(min_d, max_d - datetime.timedelta(days=30))
+            replay_date = st.slider("Select Replay Date:", min_value=min_d, max_value=max_d, value=default_date, step=datetime.timedelta(days=1), format="YYYY-MM-DD")
+            run_ew_analysis(df_master, replay_date, sensitivity, wave_type)
+
+================================================================================
+
