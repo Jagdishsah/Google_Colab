@@ -2,15 +2,29 @@
 import streamlit as st
 import requests
 import os
-from google.colab import userdata
+
+# Safely handle colab-only imports
+try:
+    from google.colab import userdata
+except ImportError:
+    userdata = None
 
 st.title("🛠️ Final Connection Diagnostic")
 
 st.subheader("1. Environment Variables Check")
-# Checking both streamlit secrets and colab secrets
+
 try:
+    # Try Streamlit secrets, then OS environment variables, then Colab secrets if available
     url = st.secrets.get("SUPABASE_URL") or os.environ.get("SUPABASE_URL")
     key = st.secrets.get("SUPABASE_KEY") or os.environ.get("SUPABASE_KEY")
+    
+    if not url or not key and userdata:
+        try:
+            url = url or userdata.get("SUPABASE_URL")
+            key = key or userdata.get("SUPABASE_KEY")
+        except:
+            pass
+            
     st.write(f"Supabase URL found: {bool(url)}")
     st.write(f"Supabase Key found: {bool(key)}")
 except Exception as e:
