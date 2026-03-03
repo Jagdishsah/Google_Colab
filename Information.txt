@@ -1,0 +1,30 @@
+PROJECT INFORMATION & ARCHITECTURE SUMMARY
+==========================================
+
+1. Technical Architecture: Supabase Direct REST API
+-------------------------------------------------
+- The project interacts with Supabase primarily through its PostgREST API using the Python 'requests' library instead of the official 'supabase-py' SDK.
+- This approach provides more control over network behavior, retries, and explicit header management.
+
+2. Dual-Table Routing Logic
+---------------------------
+- Traffic Controller: Implemented in 'Services/app/storage.py' via the '_get_target_table' method.
+- app_Files: Stores private, user-specific data (e.g., User_Data, TMS_Data, Logs).
+- public_Files: Stores shared assets (e.g., Market_Data, Stock_Data).
+
+3. Single-Table RLS Enforcement
+------------------------------
+- Row Level Security (RLS) is satisfied by the proactive injection of the 'user_id' column into all requests targeting 'app_Files'.
+- Filtering: GET requests include user_id equality filters.
+- Persistence: POST payloads explicitly include the user_id matching the authenticated session.
+
+4. 'Auth through DataStorage' Rule
+----------------------------------
+- Architectural Standard: Authentication (login, signup, logout) and session token management are centralized within the DataStorage and SupabaseFileStore modules.
+- UI Isolation: The main entry point ('Main_Nepse.py') and individual Tabs never interact with raw Supabase client instances or direct REST endpoints.
+
+5. Restore Tab Capabilities
+---------------------------
+- Bulk CSV Restoration: Allows simultaneous uploading of multiple CSV files with automatic category mapping based on filenames.
+- ZIP Data Export: Consolidates all user data categories into a single 'nepse_tms_backup.zip' for local backups.
+- Secure Data Wipe (Nuke): Provides a safety-confirmed utility to permanently purge all user records from both Cloud and Local mirrors.
