@@ -132,6 +132,25 @@ class DataStorage:
             return pd.DataFrame()
         return self._read(category, TERMINAL_SCHEMAS[category])
 
+    def clear_all_user_data(self) -> None:
+        user_id = st.session_state.get('user_id')
+        access_token = st.session_state.get('access_token')
+        # Iterate through logical keys that represent user data
+        user_keys = ["ledger", "holdings", "tms_trx", "portfolio", "watchlist", "history", "diary", "wealth", "data_metrics", "activity_log"]
+        
+        for key in user_keys:
+            rel_path = PATHS.get(key, key)
+            table = self._get_target_table(rel_path)
+            # Clear Remote
+            if self._use_supabase():
+                try: self.supabase.delete_user_data(rel_path, table=table, user_id=user_id, access_token=access_token)
+                except: pass
+            # Clear Local
+            path = self.local_root / rel_path
+            if path.exists(): path.unlink()
+
     def save_terminal_data(self, category: str, data: pd.DataFrame) -> None:
         if category in TERMINAL_SCHEMAS:
+            rel_path = PATHS.get(category, category)
+            # Explicitly ensure we use the _save helper which handles routing and session state
             self._save(category, data, f"Update Terminal {category}")

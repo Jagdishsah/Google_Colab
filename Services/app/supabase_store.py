@@ -105,3 +105,12 @@ class SupabaseFileStore:
 
     def write_csv(self, path: str, data: pd.DataFrame, table: str | None = None, user_id: str | None = None, access_token: str | None = None) -> None:
         self.write_text(path, data.to_csv(index=False), table, user_id, access_token)
+
+    def delete_user_data(self, path: str, table: str | None = None, user_id: str | None = None, access_token: str | None = None) -> None:
+        if not self.enabled(): return
+        def _op():
+            params = {"path": f"eq.{path}"}
+            if user_id: params["user_id"] = f"eq.{user_id}"
+            resp = requests.delete(self._endpoint(table), headers=self._headers(access_token), params=params, timeout=20)
+            resp.raise_for_status()
+        self._with_retry(_op)
