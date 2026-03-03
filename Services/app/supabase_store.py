@@ -34,7 +34,7 @@ class SupabaseFileStore:
 
         return {
             "apikey": self.config.key,
-            "Authorization": "Bearer " + str(self.config.key),
+            "Authorization": f"Bearer {self.config.key}",
             "Content-Type": "application/json",
         }
 
