@@ -28,8 +28,9 @@ if "user" in st.session_state:
 
 
 # --- 1. SUPABASE INITIALIZATION ---
-url = st.secrets["SUPABASE_URL"]
-key = st.secrets["SUPABASE_KEY"]
+config = load_supabase_config()
+url = config.url if config else st.secrets.get("SUPABASE_URL")
+key = config.key if config else st.secrets.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
 # --- 2. AUTHENTICATION WALL ---

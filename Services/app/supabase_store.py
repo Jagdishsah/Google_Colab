@@ -27,10 +27,14 @@ class SupabaseFileStore:
 
     def _headers(self) -> dict[str, str]:
         assert self.config is not None
-        print(f"DEBUG: Using API Key starting with: {self.config.key[:4]}****")
+
+        # Resilient Header Injection: Check if key is present and not empty
+        if not self.config.key or not str(self.config.key).strip():
+            print("CRITICAL WARNING: Supabase API key is missing or empty in _headers!")
+
         return {
             "apikey": self.config.key,
-            "Authorization": f"Bearer {self.config.key}",
+            "Authorization": "Bearer " + str(self.config.key),
             "Content-Type": "application/json",
         }
 
