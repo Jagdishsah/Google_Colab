@@ -93,6 +93,7 @@ class DataStorage:
         return self._read("holdings", HOLDINGS_COLUMNS)
 
     def save_ledger(self, data: pd.DataFrame) -> None: self._save("ledger", data, "Update Ledger")
+    def save_holdings(self, data: pd.DataFrame) -> None: self._save("holdings", data, "Update Holdings")
     def active_backend(self) -> str: return "supabase" if self._use_supabase() else self.storage_config.backend
     def login(self, e, p): return self.supabase.login(e, p)
     def logout(self, t): self.supabase.logout(t)
