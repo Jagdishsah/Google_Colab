@@ -21,8 +21,11 @@ class SupabaseFileStore:
     def enabled(self) -> bool:
         return bool(self.config and self.config.url and self.config.key)
 
-    def _headers(self, access_token: str | None = None) -> dict[str, str]:
+    def _headers(self, access_token: str | None = None, require_auth: bool = False) -> dict[str, str]:
         assert self.config is not None
+        if require_auth and not access_token:
+            raise ValueError("Access token required for this operation to enforce RLS integrity.")
+        
         token = access_token or self.config.key
         return {
             "apikey": self.config.key,
@@ -63,10 +66,13 @@ class SupabaseFileStore:
 
     def read_text(self, path: str, table: str | None = None, user_id: str | None = None, access_token: str | None = None) -> str | None:
         if not self.enabled(): return None
+        if user_id and not access_token:
+            raise SecurityError("user_id provided without access_token; RLS spoofing blocked.")
+            
         def _op():
             params = {"select": "content", "path": f"eq.{path}", "limit": 1}
             if user_id: params["user_id"] = f"eq.{user_id}"
-            resp = requests.get(self._endpoint(table), headers=self._headers(access_token), params=params, timeout=20)
+            resp = requests.get(self._endpoint(table), headers=self._headers(access_token, require_auth=bool(user_id)), params=params, timeout=20)
             resp.raise_for_status()
             rows = resp.json() or []
             return rows[0].get("content") if rows else None
@@ -75,12 +81,15 @@ class SupabaseFileStore:
 
     def write_text(self, path: str, content: str, table: str | None = None, user_id: str | None = None, access_token: str | None = None) -> None:
         if not self.enabled(): raise RuntimeError("Supabase not configured")
+        if user_id and not access_token:
+            raise SecurityError("user_id provided without access_token; RLS spoofing blocked.")
+
         def _op():
             payload = {"path": path, "content": content}
             if user_id: payload["user_id"] = user_id
             requests.post(
                 self._endpoint(table), 
-                headers={**self._headers(access_token), "Prefer": "resolution=merge-duplicates"},
+                headers={**self._headers(access_token, require_auth=bool(user_id)), "Prefer": "resolution=merge-duplicates"},
                 params={"on_conflict": "path"}, 
                 json=[payload], 
                 timeout=20
@@ -92,7 +101,7 @@ class SupabaseFileStore:
         def _op():
             params = {"select": "path", "path": f"like.{prefix}%"}
             if user_id: params["user_id"] = f"eq.{user_id}"
-            resp = requests.get(self._endpoint(table), headers=self._headers(access_token), params=params, timeout=20)
+            resp = requests.get(self._endpoint(table), headers=self._headers(access_token, require_auth=bool(user_id)), params=params, timeout=20)
             resp.raise_for_status()
             rows = resp.json() or []
             return sorted([r.get("path", "") for r in rows if r.get("path", "").endswith(".csv")])
@@ -108,9 +117,14 @@ class SupabaseFileStore:
 
     def delete_user_data(self, path: str, table: str | None = None, user_id: str | None = None, access_token: str | None = None) -> None:
         if not self.enabled(): return
+        if user_id and not access_token:
+            raise SecurityError("user_id provided without access_token; RLS spoofing blocked.")
+
         def _op():
             params = {"path": f"eq.{path}"}
             if user_id: params["user_id"] = f"eq.{user_id}"
-            resp = requests.delete(self._endpoint(table), headers=self._headers(access_token), params=params, timeout=20)
+            resp = requests.delete(self._endpoint(table), headers=self._headers(access_token, require_auth=bool(user_id)), params=params, timeout=20)
             resp.raise_for_status()
         self._with_retry(_op)
+
+class SecurityError(Exception): pass
