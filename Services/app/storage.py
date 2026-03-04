@@ -61,7 +61,7 @@ class DataStorage:
             except: return pd.DataFrame(columns=columns)
 
         if self._use_supabase():
-            df = self.supabase.read_csv(rel_path, columns, table=self._get_target_table(rel_path), 
+            df = self.supabase.read_csv(rel_path, columns, table=self._get_target_table(rel_path),
                                         user_id=st.session_state.get('user_id'), access_token=st.session_state.get('access_token'))
             if not df.empty: return df
 
@@ -72,7 +72,7 @@ class DataStorage:
         rel_path = PATHS.get(logical_key, logical_key)
         remote_ok, local_ok, err = True, True, ""
         if self._use_supabase():
-            try: self.supabase.write_csv(rel_path, data, table=self._get_target_table(rel_path), 
+            try: self.supabase.write_csv(rel_path, data, table=self._get_target_table(rel_path),
                                          user_id=st.session_state.get('user_id'), access_token=st.session_state.get('access_token'))
             except Exception as ex: remote_ok, err = False, str(ex)
         try:
@@ -97,7 +97,7 @@ class DataStorage:
     def active_backend(self) -> str: return "supabase" if self._use_supabase() else self.storage_config.backend
     def login(self, e, p): return self.supabase.login(e, p)
     def logout(self, t): self.supabase.logout(t)
-    def get_storage_health(self) -> dict: 
+    def get_storage_health(self) -> dict:
         return self.last_write_status
 
     def list_stock_data_files(self) -> list[str]:
@@ -137,7 +137,7 @@ class DataStorage:
         access_token = st.session_state.get('access_token')
         # Iterate through logical keys that represent user data
         user_keys = ["ledger", "holdings", "tms_trx", "portfolio", "watchlist", "history", "diary", "wealth", "data_metrics", "activity_log"]
-        
+
         for key in user_keys:
             rel_path = PATHS.get(key, key)
             table = self._get_target_table(rel_path)
