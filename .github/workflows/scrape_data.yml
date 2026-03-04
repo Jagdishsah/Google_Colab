@@ -24,6 +24,11 @@ jobs:
 
       - name: Run Scraper
         run: python Services/scrape.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_NAME: ${{ github.repository }}
 
       - name: Commit and Push Changes
         run: |
